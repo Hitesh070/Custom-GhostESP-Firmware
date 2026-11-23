@@ -123,12 +123,40 @@
 
 ---
 
-## 7. Next Phase: NRF24L01+PA+LNA Integration
+## 7. NRF24L01+PA+LNA Hardware Integration & Pinout (PERMANENT CONFIGURATION)
 
-With the core board hardware and RGB subsystem fully stabilized, the next phase is integrating the **NRF24L01+PA+LNA** wireless transceiver module using an 8-pin socket adapter (featuring onboard 3.3V AMS1117 regulator).
+The NRF24L01+PA+LNA transceiver with 8-pin 3.3V AMS1117 socket adapter is officially integrated. The pins map to a continuous 7-pin block located at the bottom-left of the 7Semi ESP32-S3 header.
 
-### Upcoming Work Items:
-1. **SPI Pin Mapping:** Assign dedicated hardware SPI pins (SCK, MOSI, MISO, CE, CSN, IRQ) on the ESP32-S3 avoiding strapped pins (GPIO0, GPIO45, GPIO46) and native USB/JTAG (GPIO19, GPIO20) and NeoPixel (GPIO48).
-2. **Power & Decoupling:** Connect socket adapter to 5V rail (adapter steps down to 3.3V) and verify a 10 µF–100 µF capacitor across VCC/GND for peak PA transmission stability.
-3. **Firmware SPI Configuration:** Verify or customize NRF24 pin defines in `main/core/commands/cmd_nrf24.c` and sdkconfig.
-4. **RF Testing:** Test 2.4 GHz spectrum scanning, jamming, BLE beacon advertising, and carrier wave output.
+### A. Pin Connection Table
+
+| NRF24 Adapter Pin | Function | 7Semi ESP32-S3 Pin | Header Location & Board Label | Wire Recommendation |
+| :--- | :--- | :--- | :--- | :--- |
+| **GND** | Ground | **GND** | Left Header, Bottom Pin (Pin 22) | Black jumper wire |
+| **VCC** | Power In (5V) | **5V (VIN)** | Left Header, Pin 21 (Red 5V/VIN) | Red jumper wire (Powers AMS1117 regulator) |
+| **CE** | Chip Enable | **GPIO 14** | Left Header, Pin 20 (Touch 14 / ADC2 CH3) | Orange/White wire |
+| **CSN** | SPI Chip Select | **GPIO 10** | Left Header, Pin 16 (Default `SPI_CS`) | Yellow wire |
+| **SCK** | SPI Clock | **GPIO 12** | Left Header, Pin 18 (Default `SPI_SCK`) | Green wire |
+| **MOSI**| SPI Master Out | **GPIO 11** | Left Header, Pin 17 (Default `SPI_MOSI`) | Blue wire |
+| **MISO**| SPI Master In | **GPIO 13** | Left Header, Pin 19 (Default `SPI_MISO`) | Purple wire |
+| **IRQ** | Interrupt | **NC (Not Connected)**| Not needed (driver uses SPI register polling) | Leave disconnected |
+
+> [!IMPORTANT]
+> **Power Supply Rule:** Always connect the socket adapter VCC to the **5V / VIN** pin on the ESP32-S3. The socket adapter includes an onboard AMS1117 3.3V LDO regulator that regulates 5V down to 3.3V with the necessary current capacity (up to 250 mA peak during PA transmission bursts). Connecting the adapter to the 3.3V pin can cause brownouts or radio failures.
+
+### B. Firmware Configuration
+- **SPI Host:** `SPI2_HOST` (FSPI / SPI2 peripheral)
+- **Clock Speed:** 8 MHz (`CONFIG_NRF24_SPI_CLOCK_HZ=8000000`)
+- **Verified CLI Commands:**
+  - `nrf24 status` $\to$ Reports current state and verifies `SPI2 MOSI=11 MISO=13 SCK=12 CSN=10 CE=14`
+  - `nrf24 start` $\to$ Starts 2.4 GHz spectrum analyzer sweep
+  - `nrf24 stop` $\to$ Stops analyzer task and frees SPI bus
+
+---
+
+## 8. Soldering & Pin Electrical Diagnostic (Verified November 23, 2026)
+
+All 25 exposed breakout pins on both headers were verified with custom diagnostic firmware:
+- **Left Header (16 Pins):** GPIO 4, 5, 6, 7, 15, 16, 17, 18, 8, 3, 9, 10, 11, 12, 13, 14 $\to$ **100% PASS**
+- **Right Header (9 Pins):** GPIO 1, 2, 42, 41, 40, 39, 38, 21, 47 $\to$ **100% PASS**
+- **Solder Bridge Detection:** No short circuits to Ground, 3.3V, or adjacent pins detected across the entire board.
+- **PSRAM Subsystem:** 8 MB Octal PSRAM passed 1 MB dynamic allocation and pattern verification (`0xAA55AA55`).

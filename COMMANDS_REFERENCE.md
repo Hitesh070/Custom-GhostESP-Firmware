@@ -1540,7 +1540,20 @@ Emulates a USB or Bluetooth HID keyboard/mouse to inject keystrokes and execute 
 
 > **SPI Hardware Bus Configuration:**  
 > - Host: `SPI2_HOST` (FSPI)  
-> - MOSI: `GPIO 11` | MISO: `GPIO 13` | SCK: `GPIO 12` | CSN: `GPIO 10` | CE: `GPIO 14`
+> - MOSI: `GPIO 11` | MISO: `GPIO 13` | SCK: `GPIO 12` | CSN: `GPIO 10` | CE: `GPIO 14`  
+> - Power: Connect socket adapter VCC to **5V / VIN** (the adapter has an onboard AMS1117-3.3V regulator)
+
+#### Hardware Pin Connection Reference (7Semi ESP32-S3):
+| NRF24 Adapter Pin | Function | 7Semi ESP32-S3 Pin | Location on Board |
+| :--- | :--- | :--- | :--- |
+| **GND** | Ground | **GND** | Left Header, Bottom Pin |
+| **VCC** | Power (5V) | **5V (VIN)** | Left Header, 2nd from Bottom |
+| **CE** | Chip Enable | **GPIO 14** | Left Header, 3rd from Bottom |
+| **MISO** | SPI MISO | **GPIO 13** | Left Header, 4th from Bottom (`SPI_MISO`) |
+| **SCK** | SPI Clock | **GPIO 12** | Left Header, 5th from Bottom (`SPI_SCK`) |
+| **MOSI** | SPI MOSI | **GPIO 11** | Left Header, 6th from Bottom (`SPI_MOSI`) |
+| **CSN** | SPI CS | **GPIO 10** | Left Header, 7th from Bottom (`SPI_CS`) |
+| **IRQ** | Interrupt | **NC** | Leave disconnected |
 
 ### `nrf24`
 - **Description:** Manages the NRF24L01+ transceiver for 2.4 GHz RF operations, carrier detection, and spectrum analysis.
