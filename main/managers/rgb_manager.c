@@ -1005,6 +1005,7 @@ void rainbow_task(void *pvParameter) {
   }
 
   ESP_LOGI(TAG, "Rainbow task exiting gracefully");
+  rgb_effect_task_handle = NULL;
   vTaskDelete(NULL);
 }
 
@@ -1051,20 +1052,13 @@ void rgb_manager_apply_static_from_settings(void) {
 void police_task(void *pvParameter) {
   RGBManager_t *rgb_manager = (RGBManager_t *)pvParameter;
   rainbow_task_should_exit = false;
-  while (!rainbow_task_should_exit) {
-
-    rgb_manager_policesiren_effect(rgb_manager,
-                                   settings_get_rgb_speed(&G_Settings));
-
-    vTaskDelay(pdMS_TO_TICKS(20));
-  }
+  rgb_manager_policesiren_effect(rgb_manager, settings_get_rgb_speed(&G_Settings));
   if (rgb_manager->strip) {
     led_strip_clear(rgb_manager->strip);
     led_strip_refresh(rgb_manager->strip);
   } else if (rgb_manager->is_separate_pins) {
     rgb_manager_set_color(rgb_manager, -1, 0, 0, 0, false);
   }
-  rgb_manager_apply_static_from_settings();
   rgb_effect_task_handle = NULL;
   vTaskDelete(NULL);
 }
@@ -1079,7 +1073,6 @@ void strobe_task(void *pvParameter) {
   } else if (rgb_manager->is_separate_pins) {
     rgb_manager_set_color(rgb_manager, -1, 0, 0, 0, false);
   }
-  rgb_manager_apply_static_from_settings();
   rgb_effect_task_handle = NULL;
   vTaskDelete(NULL);
 }
@@ -1094,7 +1087,6 @@ void knightrider_task(void *pvParameter) {
   } else if (rgb_manager->is_separate_pins) {
     rgb_manager_set_color(rgb_manager, -1, 0, 0, 0, false);
   }
-  rgb_manager_apply_static_from_settings();
   rgb_effect_task_handle = NULL;
   vTaskDelete(NULL);
 }
@@ -1894,6 +1886,10 @@ void rgb_manager_rainbow_effect(RGBManager_t *rgb_manager, int delay_ms) {
         uint16_t red, green, blue;
         rgb_helper_compute_rainbow_pixel_12bit(pixel_pos_q16, &red, &green, &blue);
 
+        // Convert 0-100 setting to 0-255 scale
+        uint8_t max_bright = (settings_get_neopixel_max_brightness(&G_Settings) * 255) / 100;
+        rgb_helper_scale_brightness_12bit(&red, &green, &blue, 255, max_bright);
+
         if (rgb_manager->is_separate_pins) {
           // Original logic passed inverted values to set_color? Preserving behavior.
           uint8_t r8 = rgb_helper_gamma_correct_12bit_to_8bit(red);
@@ -1945,62 +1941,146 @@ void rgb_manager_rainbow_effect(RGBManager_t *rgb_manager, int delay_ms) {
   }
 }
 
+static void set_all_strip_color(RGBManager_t *mgr, uint8_t red, uint8_t green, uint8_t blue) {
+  uint8_t max_bright = (settings_get_neopixel_max_brightness(&G_Settings) * 255) / 100;
+  uint16_t r12 = red * 16;
+  uint16_t g12 = green * 16;
+  uint16_t b12 = blue * 16;
+  rgb_helper_scale_brightness_12bit(&r12, &g12, &b12, 255, max_bright);
+  uint8_t r8 = rgb_helper_gamma_correct_12bit_to_8bit(r12);
+  uint8_t g8 = rgb_helper_gamma_correct_12bit_to_8bit(g12);
+  uint8_t b8 = rgb_helper_gamma_correct_12bit_to_8bit(b12);
+
+  if (xSemaphoreTakeRecursive(rgb_mutex, portMAX_DELAY) == pdTRUE) {
+    if (!mgr->is_separate_pins && mgr->strip) {
+      for (int i = 0; i < mgr->num_leds; i++) {
+        led_strip_set_pixel(mgr->strip, i, r8, g8, b8);
+      }
+      int attempts = 0;
+      esp_err_t ret;
+      do {
+        ret = led_strip_refresh(mgr->strip);
+        if (ret == ESP_ERR_INVALID_STATE) {
+          vTaskDelay(pdMS_TO_TICKS(2));
+        }
+      } while (ret == ESP_ERR_INVALID_STATE && ++attempts < 5);
+    } else if (mgr->is_separate_pins) {
+      rgb_manager_set_color(mgr, 0, r8, g8, b8, false);
+    }
+    xSemaphoreGiveRecursive(rgb_mutex);
+  }
+}
+
+static void set_police_strip_colors(RGBManager_t *mgr, bool red_phase) {
+  uint8_t max_bright = (settings_get_neopixel_max_brightness(&G_Settings) * 255) / 100;
+  uint16_t r12 = 4080, zero12 = 0, b12 = 4080;
+  rgb_helper_scale_brightness_12bit(&r12, &zero12, &zero12, 255, max_bright);
+  rgb_helper_scale_brightness_12bit(&zero12, &zero12, &b12, 255, max_bright);
+  uint8_t r8 = rgb_helper_gamma_correct_12bit_to_8bit(r12);
+  uint8_t b8 = rgb_helper_gamma_correct_12bit_to_8bit(b12);
+
+  if (xSemaphoreTakeRecursive(rgb_mutex, portMAX_DELAY) == pdTRUE) {
+    if (!mgr->is_separate_pins && mgr->strip) {
+      int half = mgr->num_leds / 2;
+      for (int i = 0; i < mgr->num_leds; i++) {
+        if (mgr->num_leds == 1) {
+          if (red_phase) {
+            led_strip_set_pixel(mgr->strip, 0, r8, 0, 0);
+          } else {
+            led_strip_set_pixel(mgr->strip, 0, 0, 0, b8);
+          }
+        } else {
+          if (red_phase) {
+            led_strip_set_pixel(mgr->strip, i, (i < half) ? r8 : 0, 0, 0);
+          } else {
+            led_strip_set_pixel(mgr->strip, i, 0, 0, (i >= half) ? b8 : 0);
+          }
+        }
+      }
+      int attempts = 0;
+      esp_err_t ret;
+      do {
+        ret = led_strip_refresh(mgr->strip);
+        if (ret == ESP_ERR_INVALID_STATE) {
+          vTaskDelay(pdMS_TO_TICKS(2));
+        }
+      } while (ret == ESP_ERR_INVALID_STATE && ++attempts < 5);
+    } else if (mgr->is_separate_pins) {
+      rgb_manager_set_color(mgr, 0, red_phase ? r8 : 0, 0, red_phase ? 0 : b8, false);
+    }
+    xSemaphoreGiveRecursive(rgb_mutex);
+  }
+}
+
 void rgb_manager_policesiren_effect(RGBManager_t *rgb_manager, int delay_ms) {
   if (!rgb_manager || rgb_manager->num_leds <= 0) {
     return;
   }
 
-  if (rgb_manager->is_separate_pins && rgb_manager->num_leds > 1) {
-    ESP_LOGW(TAG, "Police siren effect designed for single LED or strip treated as one.");
-    // Optionally, you could set all LEDs to the same color here if desired for strips
-  }
-  bool is_red = true;
-  while (1) {
-    for (int pulse_step = 0; pulse_step <= 255; pulse_step += 5) {
-      while (rgb_effect_paused) {
-        vTaskDelay(pdMS_TO_TICKS(10));
-      }
-      double ratio = ((double)pulse_step) / 255.0;
-      uint8_t brightness = (uint8_t)(255 * sin(ratio * (M_PI / 2)));
-      if (is_red) {
-        // Pass -1 to set all LEDs on a strip, 0 for single LED
-        rgb_manager_set_color(rgb_manager, rgb_manager->is_separate_pins ? 0 : -1, brightness, 0, 0, false);
-      } else {
-        rgb_manager_set_color(rgb_manager, rgb_manager->is_separate_pins ? 0 : -1, 0, 0, brightness, false);
-      }
-      vTaskDelay(pdMS_TO_TICKS(delay_ms));
-    }
-    vTaskDelay(pdMS_TO_TICKS(50)); // Off pause
-    is_red = !is_red;
-  }
-}
-
-void rgb_manager_strobe_effect(RGBManager_t *rgb_manager, int delay_ms) {
-  if (!rgb_manager) {
-    return;
-  }
-
-  const int target = rgb_manager->is_separate_pins ? 0 : -1;
-  const int on_delay = (delay_ms > 0) ? delay_ms : 1;
-  const int off_delay = on_delay * 3;
+  const int flash_on_ms = 45;
+  const int flash_off_ms = 40;
+  const int pause_ms = 120;
 
   while (!rainbow_task_should_exit) {
     if (rgb_effect_paused) {
       vTaskDelay(pdMS_TO_TICKS(10));
       continue;
     }
-    rgb_manager_set_color(rgb_manager, target, 255, 255, 255, false);
-    vTaskDelay(pdMS_TO_TICKS(on_delay));
 
-    if (rainbow_task_should_exit) {
-      break;
+    // 3 rapid Red flashes
+    for (int k = 0; k < 3 && !rainbow_task_should_exit; k++) {
+      set_police_strip_colors(rgb_manager, true);
+      vTaskDelay(pdMS_TO_TICKS(flash_on_ms));
+      set_all_strip_color(rgb_manager, 0, 0, 0);
+      vTaskDelay(pdMS_TO_TICKS(flash_off_ms));
     }
+    if (rainbow_task_should_exit) break;
+    vTaskDelay(pdMS_TO_TICKS(pause_ms));
 
-    rgb_manager_set_color(rgb_manager, target, 0, 0, 0, false);
-    vTaskDelay(pdMS_TO_TICKS(off_delay));
+    // 3 rapid Blue flashes
+    for (int k = 0; k < 3 && !rainbow_task_should_exit; k++) {
+      set_police_strip_colors(rgb_manager, false);
+      vTaskDelay(pdMS_TO_TICKS(flash_on_ms));
+      set_all_strip_color(rgb_manager, 0, 0, 0);
+      vTaskDelay(pdMS_TO_TICKS(flash_off_ms));
+    }
+    if (rainbow_task_should_exit) break;
+    vTaskDelay(pdMS_TO_TICKS(pause_ms));
   }
 
-  rgb_manager_set_color(rgb_manager, target, 0, 0, 0, false);
+  if (rgb_manager->strip) {
+    led_strip_clear(rgb_manager->strip);
+    led_strip_refresh(rgb_manager->strip);
+  }
+}
+
+void rgb_manager_strobe_effect(RGBManager_t *rgb_manager, int delay_ms) {
+  if (!rgb_manager || rgb_manager->num_leds <= 0) {
+    return;
+  }
+
+  const int on_ms = 35;
+  const int off_ms = 65;
+
+  while (!rainbow_task_should_exit) {
+    if (rgb_effect_paused) {
+      vTaskDelay(pdMS_TO_TICKS(10));
+      continue;
+    }
+
+    set_all_strip_color(rgb_manager, 255, 255, 255);
+    vTaskDelay(pdMS_TO_TICKS(on_ms));
+
+    if (rainbow_task_should_exit) break;
+
+    set_all_strip_color(rgb_manager, 0, 0, 0);
+    vTaskDelay(pdMS_TO_TICKS(off_ms));
+  }
+
+  if (rgb_manager->strip) {
+    led_strip_clear(rgb_manager->strip);
+    led_strip_refresh(rgb_manager->strip);
+  }
 }
 
 void rgb_manager_knightrider_effect(RGBManager_t *rgb_manager, int delay_ms) {
@@ -2009,6 +2089,64 @@ void rgb_manager_knightrider_effect(RGBManager_t *rgb_manager, int delay_ms) {
   }
 
   const int num_leds = rgb_manager->num_leds;
+
+  // Single LED mode: smooth breathing/pulsing red Cylon sweep
+  if (num_leds == 1) {
+    const int step_delay = (delay_ms > 10) ? (delay_ms / 2) : 15;
+    int phase = 0;
+    while (!rainbow_task_should_exit) {
+      if (rgb_effect_paused) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+        continue;
+      }
+
+      // Smooth sine breathing curve (0 to PI -> 0.0 to 1.0)
+      float rad = ((float)phase / 100.0f) * (float)M_PI;
+      float intensity_factor = sinf(rad);
+
+      // Scale 12-bit red from min glow (4%) to full (100%)
+      uint16_t r = (uint16_t)(4095.0f * (0.04f + 0.96f * intensity_factor));
+      uint16_t g = 0, b = 0;
+
+      uint8_t max_bright = (settings_get_neopixel_max_brightness(&G_Settings) * 255) / 100;
+      rgb_helper_scale_brightness_12bit(&r, &g, &b, 255, max_bright);
+
+      uint8_t r8 = rgb_helper_gamma_correct_12bit_to_8bit(r);
+      uint8_t g8 = rgb_helper_gamma_correct_12bit_to_8bit(g);
+      uint8_t b8 = rgb_helper_gamma_correct_12bit_to_8bit(b);
+
+      if (xSemaphoreTakeRecursive(rgb_mutex, portMAX_DELAY) == pdTRUE) {
+        if (!rgb_manager->is_separate_pins && rgb_manager->strip) {
+          led_strip_set_pixel(rgb_manager->strip, 0, r8, g8, b8);
+          esp_err_t ret;
+          int attempts = 0;
+          do {
+            ret = led_strip_refresh(rgb_manager->strip);
+            if (ret == ESP_ERR_INVALID_STATE) {
+              vTaskDelay(pdMS_TO_TICKS(2));
+            }
+          } while (ret == ESP_ERR_INVALID_STATE && ++attempts < 5);
+        } else if (rgb_manager->is_separate_pins) {
+          rgb_manager_set_color(rgb_manager, 0, r8, g8, b8, false);
+        }
+        xSemaphoreGiveRecursive(rgb_mutex);
+      }
+
+      phase += 2;
+      if (phase >= 100) {
+        phase = 0;
+      }
+
+      vTaskDelay(pdMS_TO_TICKS(step_delay));
+    }
+
+    if (rgb_manager->strip) {
+      led_strip_clear(rgb_manager->strip);
+      led_strip_refresh(rgb_manager->strip);
+    }
+    return;
+  }
+
   const int tail_length = (num_leds >= 8) ? 4 : (num_leds >= 4) ? 2 : 1;
   const int base_delay = (delay_ms > 20) ? delay_ms : 50;
   int pos = 0;

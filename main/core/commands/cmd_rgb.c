@@ -6,10 +6,12 @@
 #include "managers/rgb_manager.h"
 #include "managers/settings_manager.h"
 #include "managers/status_display_manager.h"
+#include "managers/display_manager.h"
 #include "managers/views/error_popup.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "driver/gpio.h"
+#include "esp_log.h"
 #include "sdkconfig.h"
 #include <stdbool.h>
 #include <stdint.h>
@@ -53,6 +55,10 @@ void handle_set_neopixel_brightness_cmd(int argc, char **argv) {
     
     settings_set_neopixel_max_brightness(&G_Settings, (uint8_t)brightness);
     settings_save(&G_Settings);
+    RGBMode mode = settings_get_rgb_mode(&G_Settings);
+    if (mode >= RGB_MODE_RED && mode <= RGB_MODE_PINK) {
+        rgb_manager_apply_static_from_settings();
+    }
     glog("Neopixel max brightness set to %d%%\n", brightness);
 }
 
@@ -61,8 +67,14 @@ void handle_get_neopixel_brightness_cmd(int argc, char **argv) {
     glog("Current neopixel max brightness: %d%%\n", brightness);
 }
 
+static void show_rgb_warning_popup(void *arg) {
+    (void)arg;
+    if (display_manager_is_available()) {
+        error_popup_create("EPILEPSY WARNING\nRapid flashing lights");
+    }
+}
+
 void handle_rgb_mode(int argc, char **argv) {
-    static bool last_effect_is_rainbow = false;
     if (argc < 2) {
         glog("Usage: rgbmode <rainbow|police|strobe|knight|off|color>\n");
         status_display_show_status("RGB Usage");
@@ -72,11 +84,13 @@ void handle_rgb_mode(int argc, char **argv) {
     // Cancel any currently running LED effect task safely.
     if (rgb_effect_task_handle != NULL) {
         rgb_manager_signal_rainbow_exit();
-        for (int i = 0; i < 20 && rgb_effect_task_handle != NULL; i++) {
-            vTaskDelay(pdMS_TO_TICKS(25));
+        int wait_ms = 0;
+        while (rgb_effect_task_handle != NULL && wait_ms < 1000) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+            wait_ms += 10;
         }
         if (rgb_effect_task_handle != NULL) {
-            vTaskDelete(rgb_effect_task_handle);
+            ESP_LOGW("cmd_rgb", "Previous effect task timed out waiting to exit, clearing handle");
             rgb_effect_task_handle = NULL;
         }
     }
@@ -88,60 +102,76 @@ void handle_rgb_mode(int argc, char **argv) {
             status_display_show_status("RGB Not Ready");
             return;
         }
-        xTaskCreate(rainbow_task, "rainbow_effect", 2048, &rgb_manager, 5, &rgb_effect_task_handle);
-        last_effect_is_rainbow = true;
-        glog("Rainbow mode activated\n");
-        status_display_show_status("RGB Rainbow");
+        BaseType_t res = xTaskCreate(rainbow_task, "rainbow_effect", 4096, &rgb_manager, 5, &rgb_effect_task_handle);
+        if (res == pdPASS) {
+            glog("Rainbow mode activated\n");
+            status_display_show_status("RGB Rainbow");
+        } else {
+            glog("Failed to create Rainbow task\n");
+        }
     } else if (strcasecmp(argv[1], "police") == 0) {
         if (settings_get_epilepsy_warning_enabled(&G_Settings)) {
-            error_popup_create("EPILEPSY WARNING\nRapid flashing lights");
-            vTaskDelay(pdMS_TO_TICKS(2000));
+            glog("WARNING: Epilepsy risk - rapid flashing lights\n");
+            if (display_manager_is_available()) {
+                display_manager_run_on_lvgl(show_rgb_warning_popup, NULL);
+                vTaskDelay(pdMS_TO_TICKS(2000));
+            }
         }
         if (!(rgb_manager.is_separate_pins || rgb_manager.strip)) {
             glog("RGB not initialized\n");
             status_display_show_status("RGB Not Ready");
             return;
         }
-        xTaskCreate(police_task, "police_effect", 2048, &rgb_manager, 5, &rgb_effect_task_handle);
-        last_effect_is_rainbow = false;
-        glog("Police mode activated\n");
-        status_display_show_status("RGB Police");
+        BaseType_t res = xTaskCreate(police_task, "police_effect", 4096, &rgb_manager, 5, &rgb_effect_task_handle);
+        if (res == pdPASS) {
+            glog("Police mode activated\n");
+            status_display_show_status("RGB Police");
+        } else {
+            glog("Failed to create Police task\n");
+        }
     } else if (strcasecmp(argv[1], "strobe") == 0) {
         if (settings_get_epilepsy_warning_enabled(&G_Settings)) {
-            error_popup_create("EPILEPSY WARNING\nRapid flashing lights");
-            vTaskDelay(pdMS_TO_TICKS(2000));
+            glog("WARNING: Epilepsy risk - rapid flashing lights\n");
+            if (display_manager_is_available()) {
+                display_manager_run_on_lvgl(show_rgb_warning_popup, NULL);
+                vTaskDelay(pdMS_TO_TICKS(2000));
+            }
         }
         if (!(rgb_manager.is_separate_pins || rgb_manager.strip)) {
             glog("RGB not initialized\n");
             status_display_show_status("RGB Not Ready");
             return;
         }
-        xTaskCreate(strobe_task, "strobe_effect", 2048, &rgb_manager, 5, &rgb_effect_task_handle);
-        last_effect_is_rainbow = false;
-        glog("Strobe mode activated\n");
-        status_display_show_status("RGB Strobe");
+        BaseType_t res = xTaskCreate(strobe_task, "strobe_effect", 4096, &rgb_manager, 5, &rgb_effect_task_handle);
+        if (res == pdPASS) {
+            glog("Strobe mode activated\n");
+            status_display_show_status("RGB Strobe");
+        } else {
+            glog("Failed to create Strobe task\n");
+        }
     } else if (strcasecmp(argv[1], "knight") == 0) {
         if (!(rgb_manager.is_separate_pins || rgb_manager.strip)) {
             glog("RGB not initialized\n");
             status_display_show_status("RGB Not Ready");
             return;
         }
-        xTaskCreate(knightrider_task, "knightrider_effect", 2048, &rgb_manager, 5, &rgb_effect_task_handle);
-        last_effect_is_rainbow = false;
-        glog("Knight Rider mode activated\n");
-        status_display_show_status("RGB Knight");
+        BaseType_t res = xTaskCreate(knightrider_task, "knightrider_effect", 4096, &rgb_manager, 5, &rgb_effect_task_handle);
+        if (res == pdPASS) {
+            glog("Knight Rider mode activated\n");
+            status_display_show_status("RGB Knight");
+        } else {
+            glog("Failed to create Knight Rider task\n");
+        }
     } else if (strcasecmp(argv[1], "off") == 0) {
         rgb_manager_set_color(&rgb_manager, -1, 0, 0, 0, false);
         if (!rgb_manager.is_separate_pins && rgb_manager.strip) {
             led_strip_clear(rgb_manager.strip);
             led_strip_refresh(rgb_manager.strip);
         }
+        settings_set_rgb_mode(&G_Settings, RGB_MODE_NORMAL);
+        settings_save(&G_Settings);
         glog("RGB disabled\n");
         status_display_show_status("RGB Off");
-        if (rgb_effect_task_handle != NULL) {
-            vTaskDelete(rgb_effect_task_handle);
-            rgb_effect_task_handle = NULL;
-        }
     } else {
         // Otherwise, treat the argument as a color name.
         typedef struct {
