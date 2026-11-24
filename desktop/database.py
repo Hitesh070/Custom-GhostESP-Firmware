@@ -118,3 +118,7 @@ class GhostDatabase:
                 writer = csv.writer(f)
                 writer.writerow(["BSSID", "SSID", "Channel", "RSSI", "AuthMode", "IsRogue", "ThreatReason", "Timestamp"])
                 writer.writerows(rows)
+
+    def close(self):
+        pass
+
