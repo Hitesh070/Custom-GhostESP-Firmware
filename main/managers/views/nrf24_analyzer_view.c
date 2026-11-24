@@ -421,6 +421,14 @@ static esp_err_t nrf24_hw_start(void) {
         return err;
     }
 
+    uint8_t cfg_val = 0;
+    err = nrf24_read_reg(NRF_REG_CONFIG, &cfg_val);
+    if (err != ESP_OK || (cfg_val & 0x03) != 0x03) {
+        ESP_LOGE(TAG, "NRF24 readback check failed: read 0x%02X (expected 0x03)", cfg_val);
+        nrf24_hw_stop();
+        return ESP_FAIL;
+    }
+
     ets_delay_us(2000);
     gpio_set_level((gpio_num_t)CONFIG_NRF24_CE_PIN, 1);
     return ESP_OK;
@@ -733,10 +741,10 @@ static void nrf24_graph_draw_event(lv_event_t *e) {
     rect_dsc.radius = 6;
     lv_draw_rect(draw_ctx, &rect_dsc, &coords);
 
-    lv_coord_t pad_x = 8;
-    lv_coord_t pad_y = 10;
-    lv_coord_t y_axis_w = 24;
-    lv_coord_t x_axis_h = 16;
+    lv_coord_t pad_x = (LV_HOR_RES <= 160) ? 3 : 8;
+    lv_coord_t pad_y = (LV_VER_RES <= 160) ? 4 : 10;
+    lv_coord_t y_axis_w = (LV_HOR_RES <= 160) ? 14 : 24;
+    lv_coord_t x_axis_h = (LV_VER_RES <= 160) ? 10 : 16;
     lv_coord_t plot_x1 = coords.x1 + pad_x + y_axis_w;
     lv_coord_t plot_x2 = coords.x2 - pad_x;
     lv_coord_t plot_y1 = coords.y1 + pad_y;
@@ -770,6 +778,9 @@ static void nrf24_graph_draw_event(lv_event_t *e) {
         }
 
         lv_coord_t bar_h = (lv_coord_t)((s_levels[ch] * plot_h) / 100);
+        if (s_levels[ch] > 0 && bar_h < 2) {
+            bar_h = 2;
+        }
         if (bar_h <= 0) {
             continue;
         }
@@ -786,6 +797,7 @@ static void nrf24_graph_draw_event(lv_event_t *e) {
 
         if (s_peaks[ch] > 0) {
             lv_coord_t peak_y = plot_y2 - (lv_coord_t)((s_peaks[ch] * plot_h) / 100);
+            if (peak_y < plot_y1) peak_y = plot_y1;
             lv_area_t peak_area = {
                 .x1 = bx1,
                 .y1 = peak_y,
@@ -812,8 +824,8 @@ static void nrf24_graph_draw_event(lv_event_t *e) {
     label_dsc.color = text;
     label_dsc.font = accessibility_get_font_small();
 
-    lv_coord_t y_label_x1 = plot_x1 - 18;
-    lv_coord_t y_label_x2 = plot_x1 - 2;
+    lv_coord_t y_label_x1 = (LV_HOR_RES <= 160) ? (plot_x1 - 13) : (plot_x1 - 18);
+    lv_coord_t y_label_x2 = plot_x1 - 1;
 
     lv_area_t y_75_txt = {
         .x1 = y_label_x1,
@@ -847,21 +859,39 @@ static void nrf24_graph_draw_event(lv_event_t *e) {
     };
     lv_draw_label(draw_ctx, &label_dsc, &y_0_txt, "0", NULL);
 
-    lv_area_t left_txt = {
-        .x1 = plot_x1,
-        .y1 = plot_y2 + 2,
-        .x2 = plot_x1 + 62,
-        .y2 = coords.y2 - 1
-    };
-    lv_draw_label(draw_ctx, &label_dsc, &left_txt, "2.400 GHz", NULL);
+    if (LV_HOR_RES <= 160) {
+        lv_area_t left_txt = {
+            .x1 = plot_x1,
+            .y1 = plot_y2 + 1,
+            .x2 = plot_x1 + 30,
+            .y2 = coords.y2 - 1
+        };
+        lv_draw_label(draw_ctx, &label_dsc, &left_txt, "2.40G", NULL);
 
-    lv_area_t right_txt = {
-        .x1 = plot_x2 - 62,
-        .y1 = plot_y2 + 2,
-        .x2 = plot_x2,
-        .y2 = coords.y2 - 1
-    };
-    lv_draw_label(draw_ctx, &label_dsc, &right_txt, "2.525 GHz", NULL);
+        lv_area_t right_txt = {
+            .x1 = plot_x2 - 30,
+            .y1 = plot_y2 + 1,
+            .x2 = plot_x2,
+            .y2 = coords.y2 - 1
+        };
+        lv_draw_label(draw_ctx, &label_dsc, &right_txt, "2.52G", NULL);
+    } else {
+        lv_area_t left_txt = {
+            .x1 = plot_x1,
+            .y1 = plot_y2 + 2,
+            .x2 = plot_x1 + 62,
+            .y2 = coords.y2 - 1
+        };
+        lv_draw_label(draw_ctx, &label_dsc, &left_txt, "2.400 GHz", NULL);
+
+        lv_area_t right_txt = {
+            .x1 = plot_x2 - 62,
+            .y1 = plot_y2 + 2,
+            .x2 = plot_x2,
+            .y2 = coords.y2 - 1
+        };
+        lv_draw_label(draw_ctx, &label_dsc, &right_txt, "2.525 GHz", NULL);
+    }
 
     if (s_jam_confidence >= JAM_DETECT_CONFIDENCE_TICKS && s_jam_type != JAM_NONE) {
         lv_color_t alert_bg = lv_color_hex(0xCC0000);
@@ -1017,40 +1047,41 @@ static void nrf24_timer_cb(lv_timer_t *timer) {
     }
 
     int samples_per_channel = CONFIG_NRF24_ANALYZER_SAMPLES_PER_CHANNEL;
-    int channels_per_tick = CONFIG_NRF24_ANALYZER_CHANNELS_PER_TICK;
+    int channels_per_tick = (LV_HOR_RES <= 160) ? 18 : CONFIG_NRF24_ANALYZER_CHANNELS_PER_TICK;
     int settle_us = CONFIG_NRF24_ANALYZER_SETTLE_US;
 
     if (samples_per_channel < 1) samples_per_channel = 1;
     if (channels_per_tick < 1) channels_per_tick = 1;
-    if (settle_us < 130) settle_us = 130;
+    if (settle_us < 200) settle_us = 200;
 
     for (int i = 0; i < channels_per_tick; ++i) {
         uint8_t ch = s_next_channel;
         s_next_channel = (uint8_t)((s_next_channel + 1) % NRF24_CHANNEL_COUNT);
 
         int hits = 0;
-        for (int s = 0; s < samples_per_channel; ++s) {
-            if (nrf24_set_channel(ch) != ESP_OK) {
-                continue;
-            }
-
+        if (nrf24_set_channel(ch) == ESP_OK) {
             ets_delay_us((uint32_t)settle_us);
-
-            uint8_t rpd = 0;
-            if (nrf24_read_reg(NRF_REG_RPD, &rpd) == ESP_OK && (rpd & 0x01)) {
-                hits++;
+            for (int s = 0; s < samples_per_channel; ++s) {
+                uint8_t rpd = 0;
+                if (nrf24_read_reg(NRF_REG_RPD, &rpd) == ESP_OK && (rpd & 0x01)) {
+                    hits++;
+                }
+                ets_delay_us(40);
             }
         }
 
-        uint8_t raw_level = (uint8_t)((hits * 100) / samples_per_channel);
-        /* Heavier smoothing than a plain 3:1 EMA — RPD is a 1-bit carrier
-         * detect, not analog RSSI, so raw_level is coarsely quantized and a
-         * single noisy sample can otherwise swing the bar by 25% in one tick. */
-        s_levels[ch] = (uint8_t)((s_levels[ch] * 5 + raw_level) / 6);
+        uint8_t raw_level = 0;
+        if (hits > 0) {
+            raw_level = (uint8_t)((hits * 100) / samples_per_channel);
+            if (raw_level < 25) raw_level = 25;
+            s_levels[ch] = (uint8_t)((s_levels[ch] * 3 + raw_level * 3) / 6);
+        } else {
+            s_levels[ch] = (uint8_t)((s_levels[ch] * 5) / 6);
+        }
 
-        if (s_levels[ch] > s_peaks[ch]) {
-            s_peaks[ch] = s_levels[ch];
-        } else if ((s_tick_count % 4U) == 0U && s_peaks[ch] > 0) {
+        if (raw_level > s_peaks[ch]) {
+            s_peaks[ch] = raw_level;
+        } else if ((s_tick_count % 8U) == 0U && s_peaks[ch] > 0) {
             s_peaks[ch]--;
         }
     }
@@ -1361,42 +1392,46 @@ void nrf24_analyzer_create(void) {
     lv_obj_set_style_bg_color(s_content, bg, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_content, LV_OPA_COVER, LV_PART_MAIN);
 
+    bool compact = (LV_HOR_RES <= 160 || LV_VER_RES <= 160);
+
     s_status_label = lv_label_create(s_content);
     lv_label_set_text(s_status_label, "Initializing analyzer...");
     lv_obj_set_style_text_color(s_status_label, text, 0);
-    lv_obj_set_style_text_font(s_status_label, accessibility_get_font_body(), 0);
-    lv_obj_align(s_status_label, LV_ALIGN_TOP_LEFT, 8, 6);
+    lv_obj_set_style_text_font(s_status_label, compact ? accessibility_get_font_small() : accessibility_get_font_body(), 0);
+    lv_obj_align(s_status_label, LV_ALIGN_TOP_LEFT, compact ? 4 : 8, compact ? 2 : 6);
 
     s_freq_label = lv_label_create(s_content);
     lv_label_set_text(s_freq_label, "Peak CH:000  2.400 GHz  0%");
     lv_obj_set_style_text_color(s_freq_label, text, 0);
     lv_obj_set_style_text_font(s_freq_label, accessibility_get_font_small(), 0);
-    lv_obj_align(s_freq_label, LV_ALIGN_TOP_LEFT, 8, 24);
+    lv_obj_align(s_freq_label, LV_ALIGN_TOP_LEFT, compact ? 4 : 8, compact ? 14 : 24);
 
-    int button_h = (LV_VER_RES <= 170) ? 28 : 34;
-    int graph_top = 44;
-    int graph_bottom_margin = GUI_HOME_SAFE_H + button_h + 34;
+    int button_h = compact ? 22 : ((LV_VER_RES <= 170) ? 28 : 34);
+    int graph_top = compact ? 26 : 44;
+    int graph_bottom_margin = GUI_HOME_SAFE_H + button_h + (compact ? 6 : 34);
     int graph_h = LV_VER_RES - GUI_STATUS_BAR_HEIGHT - graph_top - graph_bottom_margin;
-    if (graph_h < 70) {
-        graph_h = 70;
+    if (graph_h < (compact ? 50 : 70)) {
+        graph_h = compact ? 50 : 70;
     }
 
     s_graph = lv_obj_create(s_content);
-    lv_obj_set_pos(s_graph, 8, graph_top);
-    lv_obj_set_size(s_graph, LV_HOR_RES - 16, graph_h);
+    lv_obj_set_pos(s_graph, compact ? 4 : 8, graph_top);
+    lv_obj_set_size(s_graph, LV_HOR_RES - (compact ? 8 : 16), graph_h);
     lv_obj_set_style_bg_color(s_graph, surface, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_graph, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_width(s_graph, 0, LV_PART_MAIN);
-    lv_obj_set_style_radius(s_graph, 6, LV_PART_MAIN);
+    lv_obj_set_style_radius(s_graph, compact ? 4 : 6, LV_PART_MAIN);
     lv_obj_set_style_pad_all(s_graph, 0, LV_PART_MAIN);
     lv_obj_add_flag(s_graph, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(s_graph, nrf24_graph_draw_event, LV_EVENT_DRAW_MAIN, NULL);
 
+    int btn_w = compact ? ((LV_HOR_RES - 12) / 2) : 92;
+
     s_toggle_btn = lv_btn_create(s_content);
     gui_apply_pressed_style(s_toggle_btn);
-    lv_obj_set_size(s_toggle_btn, 92, button_h);
-    lv_obj_align(s_toggle_btn, LV_ALIGN_BOTTOM_LEFT, 8, -(GUI_HOME_SAFE_H + 8));
-    lv_obj_set_style_radius(s_toggle_btn, 6, LV_PART_MAIN);
+    lv_obj_set_size(s_toggle_btn, btn_w, button_h);
+    lv_obj_align(s_toggle_btn, LV_ALIGN_BOTTOM_LEFT, compact ? 4 : 8, -(GUI_HOME_SAFE_H + (compact ? 3 : 8)));
+    lv_obj_set_style_radius(s_toggle_btn, compact ? 4 : 6, LV_PART_MAIN);
     lv_obj_set_style_bg_color(s_toggle_btn, lv_color_hex(theme_palette_get_surface_alt(theme)), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_toggle_btn, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_width(s_toggle_btn, 1, LV_PART_MAIN);
@@ -1406,13 +1441,14 @@ void nrf24_analyzer_create(void) {
     s_toggle_label = lv_label_create(s_toggle_btn);
     lv_label_set_text(s_toggle_label, "Pause");
     lv_obj_set_style_text_color(s_toggle_label, text, 0);
+    lv_obj_set_style_text_font(s_toggle_label, accessibility_get_font_small(), 0);
     lv_obj_center(s_toggle_label);
 
     s_back_btn = lv_btn_create(s_content);
     gui_apply_pressed_style(s_back_btn);
-    lv_obj_set_size(s_back_btn, 92, button_h);
-    lv_obj_align(s_back_btn, LV_ALIGN_BOTTOM_RIGHT, -8, -(GUI_HOME_SAFE_H + 8));
-    lv_obj_set_style_radius(s_back_btn, 6, LV_PART_MAIN);
+    lv_obj_set_size(s_back_btn, btn_w, button_h);
+    lv_obj_align(s_back_btn, LV_ALIGN_BOTTOM_RIGHT, -(compact ? 4 : 8), -(GUI_HOME_SAFE_H + (compact ? 3 : 8)));
+    lv_obj_set_style_radius(s_back_btn, compact ? 4 : 6, LV_PART_MAIN);
     lv_obj_set_style_bg_color(s_back_btn, lv_color_hex(theme_palette_get_surface_alt(theme)), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_back_btn, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_border_width(s_back_btn, 1, LV_PART_MAIN);
@@ -1422,6 +1458,7 @@ void nrf24_analyzer_create(void) {
     lv_obj_t *back_lbl = lv_label_create(s_back_btn);
     lv_label_set_text(back_lbl, LV_SYMBOL_LEFT " Back");
     lv_obj_set_style_text_color(back_lbl, text, 0);
+    lv_obj_set_style_text_font(back_lbl, accessibility_get_font_small(), 0);
     lv_obj_center(back_lbl);
 
     nrf24_apply_control_selection();

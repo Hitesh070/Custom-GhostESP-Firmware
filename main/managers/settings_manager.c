@@ -319,7 +319,12 @@ void settings_set_defaults(FSettings *settings) {
 #ifdef CONFIG_IS_ATOMS3R
   settings->font_size = 0; // Small is the default on the AtomS3R display
 #endif
+#if defined(CONFIG_TFT_WIDTH) && (CONFIG_TFT_WIDTH <= 160)
+  settings->font_size = 0; // Small default on compact displays
+  settings->row_height = 0; // Compact row height on compact displays
+#else
   settings->row_height = 1; // Normal options-list row size
+#endif
   settings->reduced_motion = false;
   settings->input_repeat_speed = 1; // Normal (0=Slow, 1=Normal, 2=Fast)
   settings->high_contrast = false;

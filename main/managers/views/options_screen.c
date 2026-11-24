@@ -2615,6 +2615,9 @@ static bool is_small_screen_global = false;
 
 /* Panel-derived base row height before the user's Row Height preset is applied. */
 static int base_button_height(void) {
+    if (LV_HOR_RES <= 160 || LV_VER_RES <= 160) {
+        return 24;
+    }
     int h = is_small_screen_global ? 40 : 55;
 #ifdef CONFIG_IS_ATOMS3R
     h = 32;
@@ -4210,7 +4213,8 @@ static void decorate_settings_row_with_arrows(lv_obj_t *btn) {
     lv_obj_set_style_pad_left(btn, 8, 0);
     lv_obj_set_style_pad_right(btn, 8, 0);
 
-    const lv_font_t *font = (button_height_global <= 40) ? accessibility_get_font_body() : accessibility_get_font_title();
+    const lv_font_t *font = (button_height_global <= 30 || LV_HOR_RES <= 160) ? accessibility_get_font_small() :
+                            ((button_height_global <= 40) ? accessibility_get_font_body() : accessibility_get_font_title());
     lv_obj_set_style_text_font(left, font, 0);
     lv_obj_set_style_text_font(right, font, 0);
 

@@ -1,6 +1,7 @@
 #include "gui/accessibility_fonts.h"
 #include "gui/ui_capabilities.h"
 #include "managers/settings_manager.h"
+#include "lvgl.h"
 
 static const lv_font_t *get_base_font(uint8_t size) {
 #if GUI_LARGE_SCREEN
@@ -44,6 +45,14 @@ static const lv_font_t *get_body_font_for_size(uint8_t size) {
         default: return &lv_font_montserrat_16;
     }
 #else
+    if (LV_HOR_RES <= 160 || LV_VER_RES <= 160) {
+        switch (size) {
+            case 0: return &lv_font_montserrat_8;
+            case 1: return &lv_font_montserrat_10;
+            case 2: return &lv_font_montserrat_12;
+            default: return &lv_font_montserrat_10;
+        }
+    }
     switch (size) {
         case 0: return &lv_font_montserrat_10;
         case 1: return &lv_font_montserrat_12;
@@ -79,6 +88,14 @@ static const lv_font_t *get_title_font_for_size(uint8_t size) {
         default: return &lv_font_montserrat_16;
     }
 #else
+    if (LV_HOR_RES <= 160 || LV_VER_RES <= 160) {
+        switch (size) {
+            case 0: return &lv_font_montserrat_10;
+            case 1: return &lv_font_montserrat_12;
+            case 2: return &lv_font_montserrat_14;
+            default: return &lv_font_montserrat_12;
+        }
+    }
     switch (size) {
         case 0: return &lv_font_montserrat_12;
         case 1: return &lv_font_montserrat_14;
@@ -105,6 +122,14 @@ static const lv_font_t *get_display_font_for_size(uint8_t size) {
         default: return &lv_font_montserrat_18;
     }
 #else
+    if (LV_HOR_RES <= 160 || LV_VER_RES <= 160) {
+        switch (size) {
+            case 0: return &lv_font_montserrat_12;
+            case 1: return &lv_font_montserrat_14;
+            case 2: return &lv_font_montserrat_16;
+            default: return &lv_font_montserrat_14;
+        }
+    }
     switch (size) {
         case 0: return &lv_font_montserrat_18;
         case 1: return &lv_font_montserrat_24;

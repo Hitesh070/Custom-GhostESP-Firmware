@@ -4,8 +4,8 @@
 **Repository:** [Custom-GhostESP-Firmware](https://github.com/Hitesh070/Custom-GhostESP-Firmware)  
 **Local Project Path:** `C:\Users\hites\OneDrive\Documents\Projects\Custom GhostESP Firmware`  
 **Reference Repo Path:** `C:\Users\hites\OneDrive\Documents\ESP32\GhostESP`  
-**Current Release Version:** `v1.0.0`  
-**Date:** November 23, 2026  
+**Current Release Version:** `v1.1.0`  
+**Date:** November 24, 2026  
 
 ---
 
@@ -18,7 +18,7 @@
 | **Flash Memory** | 16 MB SPI Flash | Configured for DIO @ 80 MHz |
 | **PSRAM** | 8 MB Octal PSRAM | AP_3v3 embedded |
 | **Onboard RGB LED** | 1 × WS2812B NeoPixel on **GPIO48** | GRB byte order, 800 kHz RMT driver |
-| **Display Configuration** | **Headless** (No physical LCD/OLED attached) | GUI/LVGL layers inactive |
+| **Display Configuration** | **1.8" ST7735S 128×160 SPI TFT** | SPI3 bus: MOSI=15, SCK=16, CS=5, DC=6, RST=7, BCKL=3.3V (Active), VCC=5V, GND=GND |
 | **USB Interfaces** | Native USB-Serial/JTAG on **COM5** (Flashing & primary CLI)<br>CP210x USB-to-UART on **COM6** (Secondary serial UART) | 115200 baud |
 | **Planned Module** | **NRF24L01+PA+LNA** via 8-pin socket adapter (3.3V LDO regulated) | 2.4 GHz RF operations (Next Phase) |
 
@@ -160,3 +160,41 @@ All 25 exposed breakout pins on both headers were verified with custom diagnosti
 - **Right Header (9 Pins):** GPIO 1, 2, 42, 41, 40, 39, 38, 21, 47 $\to$ **100% PASS**
 - **Solder Bridge Detection:** No short circuits to Ground, 3.3V, or adjacent pins detected across the entire board.
 - **PSRAM Subsystem:** 8 MB Octal PSRAM passed 1 MB dynamic allocation and pattern verification (`0xAA55AA55`).
+
+---
+
+## 9. 1.8" ST7735S 128×160 SPI TFT Display Integration & GUI Scaling (Verified November 24, 2026)
+
+### A. Pin Wiring Table
+The 1.8-inch ST7735S 128×160 red SPI TFT display communicates over **SPI3_HOST** (FSPI/SPI3 peripheral), leaving **SPI2_HOST** dedicated to the NRF24L01+ transceiver without bus contention.
+
+| Display Header Pin | Function | 7Semi ESP32-S3 Pin | Notes |
+| :--- | :--- | :--- | :--- |
+| **VCC** | Power (5V/3.3V) | **5V (VIN)** | Powers onboard 3.3V LDO (`J1` open) |
+| **GND** | Ground | **GND** | System common ground |
+| **CS** | Chip Select | **GPIO 5** | Left Header, Pin 3 |
+| **RESET** | Hardware Reset | **GPIO 7** | Left Header, Pin 5 |
+| **A0 / DC** | Data / Command | **GPIO 6** | Left Header, Pin 4 |
+| **SDA / MOSI** | SPI Data In | **GPIO 15** | Left Header, Pin 6 |
+| **SCK / SCL** | SPI Clock | **GPIO 16** | Left Header, Pin 7 |
+| **LED** | Backlight Control | **3.3V** | Tied to 3.3V for full brightness (`BCKL=-1`) |
+
+### B. Firmware Configuration & UI Optimization
+1. **SDK Configuration (`configs/sdkconfig.default.esp32s3`):**
+   - `CONFIG_WITH_SCREEN=y`
+   - `CONFIG_TFT_WIDTH=128`, `CONFIG_TFT_HEIGHT=160`
+   - `CONFIG_LV_TFT_DISPLAY_CONTROLLER_ST7735S=y`
+   - `CONFIG_LV_TFT_DISPLAY_SPI3_HOST=y`
+   - `CONFIG_LV_TOUCH_CONTROLLER_NONE=y`
+   - `CONFIG_TINYUSB_HID_COUNT=3` (Enables BadUSB keyboard, mouse, gamepad injection)
+2. **Compact GUI Engine Scaling:**
+   - Sized design tokens (`include/gui/design_tokens.h`) for screens $\le 160\text{ px}$: `GUI_GRID=2`, `GUI_STATUS_BAR_H=22`, `GUI_CONTROL_H=24`, and list padding `2 px`.
+   - Dynamic font selection (`main/gui/accessibility_fonts.c`): selects Montserrat 8 / 10 fonts to prevent text truncation on compact displays.
+   - Default Settings (`main/managers/settings_manager.c`): initializes small font (0) and compact row height (0).
+3. **NRF24 Frequency Analyzer View (`main/managers/views/nrf24_analyzer_view.c`):**
+   - Sized 80 px spectrum plot with compact `2.40G` / `2.52G` non-overlapping axis labels.
+   - Dual 58 px side-by-side control buttons (**Pause** and **Back**) within 128 px width.
+   - Improved RF receiver dwell sampling: keeps CE asserted during sweep, boosts transient signal hit register to min 25%, and sweeps 18 channels per tick.
+4. **Build System Fix:**
+   - Unquoted `-L` library path in `components/esp_audio_codec/CMakeLists.txt` commented out to allow building in directories with spaces in their path.
+

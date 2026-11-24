@@ -16,27 +16,29 @@
 #define GUI_RADIUS_SM        12
 #define GUI_RADIUS_MD        18
 #define GUI_RADIUS_LG        24
+#define GUI_SAFEAREA_HOR    (GUI_GRID * 4)
+#define GUI_SAFEAREA_VER    (GUI_GRID * 2)
 #else
-#define GUI_GRID             4
+#define GUI_GRID             ((LV_HOR_RES <= 160) ? 2 : 4)
 #if defined(CONFIG_CROWPANEL_1P28_ROTARY)
 /* The visible aperture is round: reserve enough top space for generic views
  * to begin below the centered status pill rather than behind its lower edge. */
 #define GUI_STATUS_BAR_H     36
 #else
-#define GUI_STATUS_BAR_H     24
+#define GUI_STATUS_BAR_H     ((LV_VER_RES <= 160) ? 22 : 24)
 #endif
-#define GUI_CONTROL_H        48
+#define GUI_CONTROL_H        ((LV_VER_RES <= 160) ? 24 : 48)
 #define GUI_CONTENT_MAX_W    LV_HOR_RES
 #define GUI_OPTIONS_LIST_WIDTH LV_MIN(LV_HOR_RES, GUI_CONTENT_MAX_W)
-#define GUI_OPTIONS_LIST_PAD_HOR GUI_SAFEAREA_HOR
+#define GUI_OPTIONS_LIST_PAD_HOR ((LV_HOR_RES <= 160) ? 2 : GUI_SAFEAREA_HOR)
 #define GUI_HOME_SAFE_H      0
-#define GUI_RADIUS_SM        8
-#define GUI_RADIUS_MD        12
-#define GUI_RADIUS_LG        16
+#define GUI_RADIUS_SM        ((LV_HOR_RES <= 160) ? 4 : 8)
+#define GUI_RADIUS_MD        ((LV_HOR_RES <= 160) ? 6 : 12)
+#define GUI_RADIUS_LG        ((LV_HOR_RES <= 160) ? 8 : 16)
 #define GUI_LEGACY_TOUCH_BAR 1
+#define GUI_SAFEAREA_HOR     ((LV_HOR_RES <= 160) ? 4 : (GUI_GRID * 4))
+#define GUI_SAFEAREA_VER     ((LV_VER_RES <= 160) ? 2 : (GUI_GRID * 2))
 #endif
-#define GUI_SAFEAREA_HOR    (GUI_GRID * 4)
-#define GUI_SAFEAREA_VER    (GUI_GRID * 2)
 
 #if GUI_EPAPER
 #define GUI_ANIM_TRANSITION  0

@@ -71,17 +71,18 @@ int options_view_scale_row_height(int base) {
     uint8_t preset = settings_get_row_height(&G_Settings);
     if (preset >= MENU_ROW_HEIGHT_OPTION_COUNT) preset = 1;
     int scaled = (base * k_row_height_percent[preset] + 50) / 100;
-    if (scaled < 24) scaled = 24;
+    int min_h = (LV_HOR_RES <= 160 || LV_VER_RES <= 160) ? 20 : 24;
+    if (scaled < min_h) scaled = min_h;
     if (scaled > 120) scaled = 120;
     return scaled;
 }
 
 /* Row height policy shared with options_screen.c so every menu-style list
- * agrees: 40 px on the small panels, 55 px on the normal ones, 32 px on the
- * 128 px Atom. Large panels keep their own control height. The user's Row
- * Height setting then scales whichever base applies. Views that need a
- * different row (hero rows, dense logs) call options_view_set_item_height()
- * before adding items. */
+ * agrees: 24 px on ultra-compact (128x160) panels, 40 px on the small panels,
+ * 55 px on the normal ones, 32 px on the 128 px Atom. Large panels keep
+ * their own control height. The user's Row Height setting then scales
+ * whichever base applies. Views that need a different row (hero rows, dense
+ * logs) call options_view_set_item_height() before adding items. */
 static int default_row_height(void) {
 #if GUI_LARGE_SCREEN
     return options_view_scale_row_height(GUI_CONTROL_H);
@@ -90,6 +91,9 @@ static int default_row_height(void) {
 #else
     int w = LV_HOR_RES;
     int h = LV_VER_RES;
+    if (w <= 160 || h <= 160) {
+        return options_view_scale_row_height(24);
+    }
     bool small = (w <= 240 || h <= 240);
     return options_view_scale_row_height(small ? 40 : 55);
 #endif
@@ -100,6 +104,9 @@ static inline const lv_font_t *get_item_font(const options_view_t *ov) {
     return accessibility_get_font_body();
 #else
     uint8_t fs = settings_get_font_size(&G_Settings);
+    if (LV_HOR_RES <= 160 || LV_VER_RES <= 160 || ov->btn_h <= 30) {
+        return fs == 0 ? &lv_font_montserrat_8 : (fs == 1 ? &lv_font_montserrat_10 : &lv_font_montserrat_12);
+    }
     if (ov->btn_h <= 40) {
         return fs == 0 ? &lv_font_montserrat_10 : (fs == 1 ? &lv_font_montserrat_12 : &lv_font_montserrat_14);
     }
