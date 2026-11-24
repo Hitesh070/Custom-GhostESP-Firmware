@@ -5,6 +5,7 @@
 #include "freertos/semphr.h"
 #include "core/serial_manager.h"
 #include "core/glog.h"
+#include "scans/wifi/ap_scan.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -57,7 +58,20 @@ esp_err_t rogue_detector_start(void) {
     if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         s_active = true;
         xSemaphoreGive(s_mutex);
-        ESP_LOGI(TAG, "Passive rogue detection started");
+
+        /* Ingest existing scanned APs from ap_scan if available */
+        uint16_t ap_cnt = 0;
+        wifi_ap_record_t *ap_list = NULL;
+        ap_scan_get_results(&ap_cnt, &ap_list);
+        if (ap_list && ap_cnt > 0) {
+            for (uint16_t i = 0; i < ap_cnt; i++) {
+                char sanitized[33] = {0};
+                memcpy(sanitized, ap_list[i].ssid, sizeof(ap_list[i].ssid));
+                sanitized[32] = '\0';
+                rogue_detector_process_ap(ap_list[i].bssid, sanitized, ap_list[i].primary, ap_list[i].rssi, ap_list[i].authmode);
+            }
+        }
+        ESP_LOGI(TAG, "Passive rogue detection started (ingested %u baseline APs)", ap_cnt);
         return ESP_OK;
     }
     return ESP_ERR_TIMEOUT;
@@ -186,6 +200,24 @@ void rogue_detector_process_ap(const uint8_t *bssid, const char *ssid, uint8_t c
 
 void rogue_detector_dump_status(void) {
     if (!s_mutex) rogue_detector_init();
+
+    /* If empty, auto-ingest latest scan results so report is immediate */
+    if (s_record_count == 0) {
+        uint16_t ap_cnt = 0;
+        wifi_ap_record_t *ap_list = NULL;
+        ap_scan_get_results(&ap_cnt, &ap_list);
+        if (ap_list && ap_cnt > 0) {
+            bool prev_active = s_active;
+            s_active = true;
+            for (uint16_t i = 0; i < ap_cnt; i++) {
+                char sanitized[33] = {0};
+                memcpy(sanitized, ap_list[i].ssid, sizeof(ap_list[i].ssid));
+                sanitized[32] = '\0';
+                rogue_detector_process_ap(ap_list[i].bssid, sanitized, ap_list[i].primary, ap_list[i].rssi, ap_list[i].authmode);
+            }
+            s_active = prev_active;
+        }
+    }
 
     if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(500)) != pdTRUE) {
         glog("Rogue detector busy.\n");

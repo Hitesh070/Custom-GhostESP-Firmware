@@ -5,6 +5,12 @@
 #include "freertos/semphr.h"
 #include "core/serial_manager.h"
 #include "core/glog.h"
+#include "esp_wifi.h"
+
+typedef void (*wifi_promiscuous_cb_t_t)(void *buf, wifi_promiscuous_pkt_type_t type);
+extern void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback);
+extern void wifi_manager_stop_monitor_mode(void);
+extern void wifi_deauth_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type);
 #include <string.h>
 #include <stdio.h>
 
@@ -68,7 +74,8 @@ esp_err_t deauth_monitor_start(void) {
         s_window_start_ms = get_time_ms();
         s_window_frames = 0;
         xSemaphoreGive(s_mutex);
-        ESP_LOGI(TAG, "Passive deauth monitor started");
+        wifi_manager_start_monitor_mode(wifi_deauth_scan_callback);
+        ESP_LOGI(TAG, "Passive deauth monitor started with promiscuous capture");
         return ESP_OK;
     }
     return ESP_ERR_TIMEOUT;
@@ -78,6 +85,7 @@ esp_err_t deauth_monitor_stop(void) {
     if (s_mutex && xSemaphoreTake(s_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         s_active = false;
         xSemaphoreGive(s_mutex);
+        wifi_manager_stop_monitor_mode();
         ESP_LOGI(TAG, "Passive deauth monitor stopped");
         return ESP_OK;
     }

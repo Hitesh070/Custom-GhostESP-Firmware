@@ -30,11 +30,9 @@ scripts/site/rollup.config.mjs
 .venv
 binaries/
 ghost-control-venv
-binaries/
 __pycache__
 *.pyc
 local_builds
 venv
-binaries/
-
-
+desktop/*.db
+*.db

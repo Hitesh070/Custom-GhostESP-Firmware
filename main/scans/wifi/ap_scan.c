@@ -10,6 +10,7 @@
  */
 
 #include "scans/wifi/ap_scan.h"
+#include "modules/rogue_detector.h"
 #include "core/callbacks.h"
 #include "scans/wifi/wifi_channels.h"
 #include "scans/wifi/hop_profile.h"
@@ -911,6 +912,9 @@ void ap_scan_print_results(void) {
                  scanned_aps[i].bssid[3], scanned_aps[i].bssid[4], scanned_aps[i].bssid[5]);
         char vendor[64] = {0};
         bool has_vendor = ouis_lookup_vendor(mac_str, vendor, sizeof(vendor));
+
+        // Evaluate AP through God Mode V3 Rogue AP & Evil Twin Detection Engine
+        rogue_detector_process_ap(scanned_aps[i].bssid, sanitized_ssid, scanned_aps[i].primary, scanned_aps[i].rssi, scanned_aps[i].authmode);
 
         glog("[%u] SSID: %s,\n"
              "     BSSID: %02X:%02X:%02X:%02X:%02X:%02X,\n"
