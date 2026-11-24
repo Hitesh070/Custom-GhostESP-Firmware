@@ -629,6 +629,7 @@ void register_commands() {
     extern void handle_profile_cmd(int argc, char **argv);
     extern void handle_selftest_cmd(int argc, char **argv);
     extern void handle_ghost_cmd(int argc, char **argv);
+    extern void handle_temp_cmd(int argc, char **argv);
 
     register_command("roguedetect", handle_rogue_cmd);
     register_command("eviltwindetect", handle_rogue_cmd);
@@ -637,6 +638,8 @@ void register_commands() {
     register_command("profile", handle_profile_cmd);
     register_command("selftest", handle_selftest_cmd);
     register_command("ghost", handle_ghost_cmd);
+    register_command("temp", handle_temp_cmd);
+    register_command("temperature", handle_temp_cmd);
 
     cmd_comm_register_callback();
 

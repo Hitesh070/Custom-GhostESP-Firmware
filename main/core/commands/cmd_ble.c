@@ -54,6 +54,12 @@ static void chameleon_cli_progress_cb(int current, int total, void *user) {
 
 #if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(GHOSTESP_NO_NATIVE_BLE)
 void handle_ble_scan_cmd(int argc, char **argv) {
+    if (argc == 1 || (argc > 1 && strcmp(argv[1], "-adv") == 0)) {
+        glog("Starting BLE Advertiser Scan.\n");
+        advertiser_scan_start();
+        return;
+    }
+
     if (argc > 1 && strcmp(argv[1], "-f") == 0) {
         glog("Starting Find the Flippers.\n");
         flipper_scan_start();
@@ -84,12 +90,6 @@ void handle_ble_scan_cmd(int argc, char **argv) {
         return;
     }
 
-    if (argc > 1 && strcmp(argv[1], "-adv") == 0) {
-        glog("Starting BLE Advertiser Scan.\n");
-        advertiser_scan_start();
-        return;
-    }
-
     if (argc > 2 && strcmp(argv[1], "-oui") == 0) {
         uint8_t oui[3];
         if (!ouis_parse_prefix(argv[2], oui)) {
@@ -107,7 +107,7 @@ void handle_ble_scan_cmd(int argc, char **argv) {
         return;
     }
 
-    if (argc > 1 && strcmp(argv[1], "-s") == 0) {
+    if (argc > 1 && (strcmp(argv[1], "-s") == 0 || strcmp(argv[1], "stop") == 0)) {
         glog("Stopping BLE Scan.\n");
         bool detect_active = ble_device_detect_is_active();
         if (detect_active) {
@@ -122,7 +122,15 @@ void handle_ble_scan_cmd(int argc, char **argv) {
         return;
     }
 
-    glog("Invalid Command Syntax.\n");
+    glog("Usage: blescan [-adv | -f | -ds | -a | -r | -g | -s]\n"
+         "  blescan          : General BLE advertiser scan\n"
+         "  blescan -adv     : General BLE advertiser scan\n"
+         "  blescan -f       : Find the Flippers\n"
+         "  blescan -ds      : BLE Spam Detector\n"
+         "  blescan -a       : AirTag Scanner\n"
+         "  blescan -r       : Raw Packet Scan\n"
+         "  blescan -g       : GATT Device Scan\n"
+         "  blescan -s / stop: Stop BLE scan\n");
 }
 
 static void ble_detect_print_devices(void) {

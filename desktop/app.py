@@ -176,6 +176,8 @@ class GhostCommandCenter(tk.Tk):
 
         actions = [
             ("⚡ Run Full Self-Test", "selftest"),
+            ("🌡 Core Temp & HW Telemetry", "temp"),
+            ("❄️ Disable SoftAP (Cool Down)", "apenable 0"),
             ("📡 Start Rogue AP Detection", "roguedetect start"),
             ("🛑 Stop Rogue AP Detection", "roguedetect stop"),
             ("⚡ Start Deauth Monitor", "deauthmon start"),
@@ -228,10 +230,12 @@ class GhostCommandCenter(tk.Tk):
         # Toolbar
         tbar = tk.Frame(frame, bg=THEME["bg_card"], height=40)
         tbar.pack(fill="x", pady=4)
-        tk.Button(tbar, text="▶ Start BLE Scan", command=lambda: self._send_quick_cmd("blescan"), bg=THEME["accent_green"], fg="#000", font=("Consolas", 9, "bold")).pack(side="left", padx=5, pady=4)
-        tk.Button(tbar, text="⏹ Stop Scan", command=lambda: self._send_quick_cmd("stop"), bg=THEME["accent_red"], fg="#fff", font=("Consolas", 9, "bold")).pack(side="left", padx=5, pady=4)
-        tk.Button(tbar, text="🍎 Scan AirTags", command=lambda: self._send_quick_cmd("listairtags"), bg=THEME["accent_cyan"], fg="#000", font=("Consolas", 9, "bold")).pack(side="left", padx=5, pady=4)
-        tk.Button(tbar, text="🐬 Scan Flippers", command=lambda: self._send_quick_cmd("listflippers"), bg=THEME["accent_yellow"], fg="#000", font=("Consolas", 9, "bold")).pack(side="left", padx=5, pady=4)
+        tk.Button(tbar, text="▶ Start BLE Scan", command=lambda: self._send_quick_cmd("blescan -adv"), bg=THEME["accent_green"], fg="#000", font=("Consolas", 9, "bold")).pack(side="left", padx=5, pady=4)
+        tk.Button(tbar, text="⏹ Stop Scan", command=lambda: self._send_quick_cmd("blescan -s"), bg=THEME["accent_red"], fg="#fff", font=("Consolas", 9, "bold")).pack(side="left", padx=5, pady=4)
+        tk.Button(tbar, text="🍎 AirTag Scan", command=lambda: self._send_quick_cmd("blescan -a"), bg=THEME["accent_cyan"], fg="#000", font=("Consolas", 9, "bold")).pack(side="left", padx=5, pady=4)
+        tk.Button(tbar, text="📋 List AirTags", command=lambda: self._send_quick_cmd("listairtags"), bg=THEME["bg_input"], fg=THEME["accent_cyan"], font=("Consolas", 9)).pack(side="left", padx=5, pady=4)
+        tk.Button(tbar, text="🐬 Flipper Scan", command=lambda: self._send_quick_cmd("blescan -f"), bg=THEME["accent_yellow"], fg="#000", font=("Consolas", 9, "bold")).pack(side="left", padx=5, pady=4)
+        tk.Button(tbar, text="📋 List Flippers", command=lambda: self._send_quick_cmd("listflippers"), bg=THEME["bg_input"], fg=THEME["accent_yellow"], font=("Consolas", 9)).pack(side="left", padx=5, pady=4)
         tk.Button(tbar, text="🔍 BLE Detect", command=lambda: self._send_quick_cmd("bledetect"), bg=THEME["bg_input"], fg=THEME["text_main"], font=("Consolas", 9)).pack(side="left", padx=5, pady=4)
         tk.Button(tbar, text="🗑 Clear Table", command=self._clear_ble_table, bg=THEME["bg_input"], fg=THEME["text_dim"], font=("Consolas", 9)).pack(side="left", padx=5, pady=4)
         tk.Button(tbar, text="💾 Export BLE to CSV", command=self._export_ble_csv, bg=THEME["bg_input"], fg=THEME["text_main"], font=("Consolas", 9)).pack(side="right", padx=5, pady=4)

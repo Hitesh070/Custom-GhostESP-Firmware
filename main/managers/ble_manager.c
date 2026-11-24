@@ -224,17 +224,21 @@ void nimble_host_task(void *param) {
 
 static BaseType_t ble_create_host_task(void) {
 #if defined(CONFIG_SPIRAM)
+    /* 4096 bytes is standard NimBLE host stack size (1024 words).
+     * Try internal RAM first (4096 bytes); if contiguous internal block
+     * is unavailable due to Wi-Fi DMA allocations, seamlessly fall back
+     * to PSRAM (CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y). */
+    const uint32_t stack_words = 1024;
+    const size_t stack_bytes = stack_words * sizeof(StackType_t);
+
     if (!nimble_host_task_stack) {
-#if defined(CONFIG_BT_NIMBLE_NVS_PERSIST)
-        /* Bond restore/write performs flash operations from this task. Keep
-         * its active stack internal because flash cache operations can make
-         * PSRAM inaccessible, especially on ESP32-C5/C61. */
-        nimble_host_task_stack = heap_caps_malloc(NIMBLE_HOST_TASK_STACK_SIZE * sizeof(StackType_t),
+        nimble_host_task_stack = heap_caps_malloc(stack_bytes,
                                                   MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-#else
-        nimble_host_task_stack = heap_caps_malloc(NIMBLE_HOST_TASK_STACK_SIZE * sizeof(StackType_t),
-                                                  MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-#endif
+        if (!nimble_host_task_stack) {
+            ESP_LOGW(TAG_BLE, "Internal RAM fragmented; allocating nimble_host stack from PSRAM (%u bytes)", (unsigned)stack_bytes);
+            nimble_host_task_stack = heap_caps_malloc(stack_bytes,
+                                                      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+        }
     }
     if (!nimble_host_task_buffer) {
         nimble_host_task_buffer = heap_caps_malloc(sizeof(StaticTask_t),
@@ -242,25 +246,24 @@ static BaseType_t ble_create_host_task(void) {
     }
     if (nimble_host_task_stack && nimble_host_task_buffer) {
         nimble_host_task_handle = xTaskCreateStatic(nimble_host_task, "nimble_host",
-                                                   NIMBLE_HOST_TASK_STACK_SIZE, NULL, 5,
+                                                   stack_words, NULL, 5,
                                                    nimble_host_task_stack,
                                                    nimble_host_task_buffer);
         if (nimble_host_task_handle) {
-#if defined(CONFIG_BT_NIMBLE_NVS_PERSIST)
-            ESP_LOGI(TAG_BLE, "nimble_host stack allocated from internal RAM: %d bytes",
-#else
-            ESP_LOGI(TAG_BLE, "nimble_host stack allocated from PSRAM: %d bytes",
-#endif
-                     (int)(NIMBLE_HOST_TASK_STACK_SIZE * sizeof(StackType_t)));
+            ESP_LOGI(TAG_BLE, "nimble_host task created successfully (%u bytes stack)", (unsigned)stack_bytes);
             return pdPASS;
         }
     }
-    free(nimble_host_task_stack);
-    free(nimble_host_task_buffer);
-    nimble_host_task_stack = NULL;
-    nimble_host_task_buffer = NULL;
+    if (nimble_host_task_stack) {
+        free(nimble_host_task_stack);
+        nimble_host_task_stack = NULL;
+    }
+    if (nimble_host_task_buffer) {
+        free(nimble_host_task_buffer);
+        nimble_host_task_buffer = NULL;
+    }
 #endif
-    return xTaskCreate(nimble_host_task, "nimble_host", NIMBLE_HOST_TASK_STACK_SIZE,
+    return xTaskCreate(nimble_host_task, "nimble_host", 4096,
                        NULL, 5, &nimble_host_task_handle);
 }
 
@@ -1079,6 +1082,15 @@ void ble_deinit(void) {
         vTaskDelay(pdMS_TO_TICKS(50));
 
         nimble_port_deinit();
+
+        if (nimble_host_task_stack != NULL) {
+            free(nimble_host_task_stack);
+            nimble_host_task_stack = NULL;
+        }
+        if (nimble_host_task_buffer != NULL) {
+            free(nimble_host_task_buffer);
+            nimble_host_task_buffer = NULL;
+        }
 
         if (nimble_host_exit_sem != NULL) {
             vSemaphoreDelete(nimble_host_exit_sem);

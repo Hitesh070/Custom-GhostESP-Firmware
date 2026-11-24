@@ -100,7 +100,7 @@ if(NOT CONFIG_WITH_SCREEN)
     list(FILTER app_sources EXCLUDE REGEX "vendor/images/ghostchi/.*\\.c")
 endif()
 
-set(required_components bt nvs_flash driver esp_driver_gpio esp_driver_i2c esp_driver_uart esp_driver_rmt esp_driver_i2s esp_driver_usb_serial_jtag esp_http_server mdns cjson esp_http_client mbedtls fatfs sdmmc wpa_supplicant lvgl lvgl_esp32_drivers freertos esp_lcd esp_mm esp_adc esp_timer esp_app_format io_manager esp_eth espcoredump esp-tls app_update esp_https_ota spi_flash bootloader_support)
+set(required_components bt nvs_flash driver esp_driver_gpio esp_driver_i2c esp_driver_uart esp_driver_rmt esp_driver_i2s esp_driver_usb_serial_jtag esp_driver_tsens esp_http_server mdns cjson esp_http_client mbedtls fatfs sdmmc wpa_supplicant lvgl lvgl_esp32_drivers freertos esp_lcd esp_mm esp_adc esp_timer esp_app_format io_manager esp_eth espcoredump esp-tls app_update esp_https_ota spi_flash bootloader_support)
 
 # The sinkhole's optional HTTPS interception server needs the TLS capable
 # httpd.  The component is listed unconditionally because the component

@@ -92,6 +92,50 @@ void handle_selftest_cmd(int argc, char **argv) {
     ghost_unlock_achievement(ACH_FIRST_SELFTEST);
 }
 
+#include "esp_heap_caps.h"
+#if SOC_TEMP_SENSOR_SUPPORTED
+#include "driver/temperature_sensor.h"
+#endif
+
 void handle_ghost_cmd(int argc, char **argv) {
     ghost_handle_developer_command(argc, argv);
+}
+
+void handle_temp_cmd(int argc, char **argv) {
+    (void)argc;
+    (void)argv;
+    float temp_c = -999.0f;
+#if SOC_TEMP_SENSOR_SUPPORTED
+    static temperature_sensor_handle_t temp_sensor = NULL;
+    if (!temp_sensor) {
+        temperature_sensor_config_t temp_sensor_config = TEMPERATURE_SENSOR_CONFIG_DEFAULT(10, 85);
+        if (temperature_sensor_install(&temp_sensor_config, &temp_sensor) == ESP_OK) {
+            temperature_sensor_enable(temp_sensor);
+        }
+    }
+    if (temp_sensor) {
+        temperature_sensor_get_celsius(temp_sensor, &temp_c);
+    }
+#endif
+    size_t free_int = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    size_t free_psram = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+
+    glog("\n               GHOSTESP HARDWARE & THERMAL TELEMETRY              \n"
+         "=================================================================\n");
+    if (temp_c > -100.0f) {
+        float temp_f = (temp_c * 9.0f / 5.0f) + 32.0f;
+        glog(" Core Die Temp    : %.1f C (%.1f F) [%s]\n",
+             temp_c, temp_f,
+             (temp_c < 60.0f) ? "NOMINAL / COOL" : (temp_c < 75.0f ? "WARM (NORMAL UNDER RADIO LOAD)" : "HOT"));
+    } else {
+        glog(" Core Die Temp    : N/A\n");
+    }
+    glog(" Operating Clock  : 240 MHz (Dual-Core Xtensa LX7)\n");
+    glog(" Internal SRAM    : %u KB free\n", (unsigned)(free_int / 1024));
+    glog(" Octal PSRAM      : %u MB free\n", (unsigned)(free_psram / (1024 * 1024)));
+    glog(" Thermal Note     : ESP32-S3 silicon is rated up to 105 C.\n"
+         "                    Under continuous 240MHz and Wi-Fi SoftAP/RX,\n"
+         "                    operating temperatures between 45 C and 60 C are normal.\n"
+         "                    Use 'apenable 0' to disable SoftAP and cool down.\n"
+         "=================================================================\n\n");
 }
