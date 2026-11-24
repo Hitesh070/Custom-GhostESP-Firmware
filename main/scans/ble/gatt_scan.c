@@ -802,6 +802,10 @@ static int gatt_gap_event_cb(struct ble_gap_event *event, void *arg) {
         glog("Disconnected.\n");
         gatt_conn_handle = BLE_HS_CONN_HANDLE_NONE;
         g_enum_state.enum_in_progress = false;
+        g_enum_state.svc_discovery_done = true;
+        g_enum_state.chr_discovery_done = true;
+        g_enum_state.read_done = true;
+        g_enum_state.encryption_done = true;
         break;
         
     case BLE_GAP_EVENT_PASSKEY_ACTION: {
@@ -1192,6 +1196,13 @@ void gatt_scan_enumerate_services(void) {
             
             gatt_read_known_services(gatt_conn_handle, dev);
             ble_gap_terminate(gatt_conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+            gatt_conn_handle = BLE_HS_CONN_HANDLE_NONE;
+        }
+    } else {
+        glog("Service discovery timed out.\n");
+        if (gatt_conn_handle != BLE_HS_CONN_HANDLE_NONE) {
+            ble_gap_terminate(gatt_conn_handle, BLE_ERR_REM_USER_CONN_TERM);
+            gatt_conn_handle = BLE_HS_CONN_HANDLE_NONE;
         }
     }
     

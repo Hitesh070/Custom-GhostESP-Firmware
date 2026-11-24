@@ -9,6 +9,7 @@
 #include "core/serial_manager.h"
 #include "core/system_manager.h"
 #include "core/ghostesp_version.h"
+#include "hardware/board_config.h"
 #include "core/memory_debug.h"
 #include "managers/ap_manager.h"
 #include "managers/display_manager.h"
@@ -724,6 +725,9 @@ void app_main(void) {
 #endif
     memory_debug_init();
     memory_debug_start_boot_trace();
+    /* 7Semi ESP32-S3 Hardware Authority & Central Pin Allocation Registry */
+    board_init();
+    board_dump_pinout_table();
     MEASURE_INIT_RAM("Ghostchi Mood init", ghostchi_mood_init());
     ghostchi_mood_record_event(GHOSTCHI_MOOD_EVENT_BOOT, 3);
 

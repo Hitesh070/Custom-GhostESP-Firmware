@@ -41,8 +41,8 @@ void handle_sd_pins_mmc(int argc, char **argv) {
   int d3 = atoi(argv[6]);
   
   if (clk < 0 || cmd < 0 || d0 < 0 || d1 < 0 || d2 < 0 || d3 < 0 ||
-      clk > 40 || cmd > 40 || d0 > 40 || d1 > 40 || d2 > 40 || d3 > 40) {
-    glog("Invalid GPIO pins. Pins must be between 0 and 40.\n");
+      clk > 48 || cmd > 48 || d0 > 48 || d1 > 48 || d2 > 48 || d3 > 48) {
+    glog("Invalid GPIO pins. Pins must be between 0 and 48.\n");
     status_display_show_status("Pins Invalid");
     return;
   }
@@ -66,8 +66,8 @@ void handle_sd_pins_spi(int argc, char **argv) {
   int mosi = atoi(argv[4]);
   
   if (cs < 0 || clk < 0 || miso < 0 || mosi < 0 ||
-      cs > 40 || clk > 40 || miso > 40 || mosi > 40) {
-    glog("Invalid GPIO pins. Pins must be between 0 and 40.\n");
+      cs > 48 || clk > 48 || miso > 48 || mosi > 48) {
+    glog("Invalid GPIO pins. Pins must be between 0 and 48.\n");
     status_display_show_status("Pins Invalid");
     return;
   }
@@ -152,7 +152,9 @@ static void sd_cli_cleanup(void) {
 void handle_sd_cmd(int argc, char **argv) {
     if (argc < 2) {
         glog("SD:USAGE\n");
-        glog("  sd status                        - Show SD card status\n");
+        glog("  sd status                        - Show SD card status and health\n");
+        glog("  sd mount                         - Mount SD card filesystem\n");
+        glog("  sd unmount                       - Safely unmount SD card\n");
         glog("  sd list [path]                   - List files/dirs with indices\n");
         glog("  sd info <idx|path>               - Show file/dir info\n");
         glog("  sd size <idx|path>               - Get file size\n");
@@ -168,13 +170,39 @@ void handle_sd_cmd(int argc, char **argv) {
     const char *sub = argv[1];
     char path[256];
 
+    if (strcmp(sub, "mount") == 0) {
+        if (sd_card_manager.is_initialized) {
+            glog("SD: already mounted.\n");
+            return;
+        }
+        esp_err_t ret = sd_card_init();
+        if (ret == ESP_OK) {
+            glog("SD: mounted successfully at %s\n", SD_MOUNT_POINT);
+        } else {
+            glog("SD: mount failed: %s (%s)\n", esp_err_to_name(ret), sd_card_get_status_str());
+        }
+        return;
+    }
+
+    if (strcmp(sub, "unmount") == 0) {
+        if (!sd_card_manager.is_initialized) {
+            glog("SD: not mounted.\n");
+            return;
+        }
+        sd_card_unmount();
+        glog("SD: unmounted successfully.\n");
+        return;
+    }
+
     if (strcmp(sub, "status") == 0) {
         if (!sd_cli_ensure_mounted()) {
             glog("SD:STATUS:mounted=false\n");
+            glog("SD:STATUS:reason=%s\n", sd_card_get_status_str());
             sd_cli_cleanup();
             return;
         }
         glog("SD:STATUS:mounted=true\n");
+        glog("SD:STATUS:health=%s\n", sd_card_get_status_str());
         if (sd_card_is_virtual_storage()) {
             glog("SD:STATUS:type=virtual\n");
         } else if (sd_card_manager.card) {

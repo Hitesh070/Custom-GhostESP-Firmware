@@ -4,6 +4,38 @@
 Untagged entries are by ([@jaylikesbunda](https://github.com/jaylikesbunda)). A trailing `@handle` credits a guest contributor for that specific line. "Ported from / adapted from" credits the upstream source a feature was based on, not GhostESP authorship.
 
 
+## v2.3.0 – GhostESP God Mode V2 Master Re-Engineering Release
+
+### Added
+- **Central Hardware Authority & Pin Registry (`board_config.h` / `board_config.c`):**
+  - Thread-safe, FreeRTOS recursive-mutex-protected 49-channel GPIO registry for the 7Semi ESP32-S3-WROOM-1-N16R8.
+  - Hardware-enforced permanent mutex locking for Octal PSRAM bus (GPIO 33–38) and Native USB PHY (GPIO 19–20).
+  - Silicon restriction guard automatically rejecting output configurations on input-only GPIO 46.
+  - Dedicated diagnostic pinout table console dump (`board_dump_pinout_table()`) running at boot.
+- **Dedicated Dual-SPI Bus Architecture:**
+  - `SPI2_HOST` (FSPI) isolated for NRF24L01+PA+LNA 2.4 GHz front-end at 8 MHz.
+  - `SPI3_HOST` (HSPI) isolated for ST7735S 128×160 TFT Display at 20 MHz, completely eliminating bus contention.
+- **Universal IR Database Expansion & CLI Features:**
+  - Expanded universal IR database beyond POWER codes to include universal MUTE, VOL+, VOL-, CH+, CH-, and INPUT codes across NEC, Samsung32, Sony SIRC, and Philips RC5/RC6.
+  - Added fuzzy and alias matching (`universal_ir_matches_action()`) supporting `TURNHISTVOFF`, `pwr`, and `power off`.
+  - Added `ir raw` command for on-the-fly timing pulse firing and `ir status` / `ir test` diagnostic commands.
+- **SD Card Lifecycle Architecture:**
+  - Implemented `sd_card_status_t` lifecycle tracking (`SD_STATUS_NOT_INITIALIZED`, `SD_STATUS_MOUNTED`, `SD_STATUS_NO_CARD`, etc.).
+  - Added dynamic CLI commands `sd mount`, `sd unmount`, and enhanced `sd status`.
+  - Added future-proof conflict-free 1-bit SDMMC pin mapping on GPIO 1, 2, 4, 47.
+- **Engineering Documentation & Artifact Suite:**
+  - Produced `SRS.md`, `PROJECT_PLAN.md`, `TASKS.md`, `ARCHITECTURE.md`, `BUILD_GUIDE.md`, `TROUBLESHOOTING.md`, `REPOSITORY_AUDIT.md`, `EXISTING_FEATURES.md`, `TECHNICAL_DEBT.md`, `HARDWARE_COMPATIBILITY.md`, `PIN_CONFIGURATION.md`, `WIRELESS_RF_SUBSYSTEM_REPORT.md`, `IR_AND_PERIPHERALS_REPORT.md`, and `TESTING_REPORT.md`.
+
+### Fixed
+- **Critical IR Blaster Thermal Hazard:** Remedied bug in `infrared_manager.c` that asserted IR TX GPIO continuously HIGH prior to carrier modulation, eliminating thermal burnout risk and ESP32 brownouts.
+- **BLE GATT Scan Indefinite Hang:** Added disconnection flag unblocking in `gatt_gap_event_cb` on `BLE_GAP_EVENT_DISCONNECT`, unblocking worker tasks and resetting `gatt_conn_handle` to `BLE_HS_CONN_HANDLE_NONE`.
+- **Wi-Fi Monitor Mode Driver Panics:** Removed fatal `ESP_ERROR_CHECK()` calls from `wifi_manager_start_monitor_mode()` and `wifi_manager_stop_monitor_mode()`, substituting non-fatal logging and graceful error teardown.
+- **Wi-Fi RX Promiscuous Buffer Bounds:** Fortified all 9 raw promiscuous packet callbacks in `callbacks.c` with strict null checks and header length verification (`sig_len >= sizeof(...)`) before dereferencing payload pointers.
+- **Wi-Fi Tracking RSSI Inversion:** Corrected inverted min/max RSSI tracking initializations (`min = 127`, `max = -128`).
+- **NRF24 Hardware Presence & Race Condition:** Added register readback verification (`0x03` on `NRF_REG_CONFIG`) in `nrf24_hw_start()` and added synchronized 500 ms task cleanup wait loop in `nrf24_remote_manager_stop()`.
+- **SD Pin Range Bounds:** Extended pin validation bounds in `cmd_sd.c` from `> 40` to `> 48` for ESP32-S3 high GPIOs.
+
+
 ## v2.2.3
 
 ### Added

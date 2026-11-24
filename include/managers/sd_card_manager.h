@@ -72,6 +72,21 @@ esp_err_t sd_card_create_directory(const char *path);
 bool sd_card_exists(const char *path);
 esp_err_t sd_card_setup_directory_structure();
 
+// Detailed SD card lifecycle and health status
+typedef enum {
+    SD_STATUS_NOT_INITIALIZED = 0,
+    SD_STATUS_MOUNTED,
+    SD_STATUS_NO_CARD,
+    SD_STATUS_UNFORMATTED,
+    SD_STATUS_BUS_ERROR,
+    SD_STATUS_UNMOUNTED
+} sd_card_status_t;
+
+sd_card_status_t sd_card_get_status(void);
+const char *sd_card_get_status_str(void);
+bool sd_card_is_mounted(void);
+bool sd_card_is_present(void);
+
 // New functions for SD card pin configuration
 esp_err_t sd_card_set_mmc_pins(int clk, int cmd, int d0, int d1, int d2, int d3);
 esp_err_t sd_card_set_spi_pins(int cs, int clk, int miso, int mosi);

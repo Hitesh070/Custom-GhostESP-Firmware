@@ -69,7 +69,7 @@ static lv_timer_t *s_timer = NULL;
 
 #ifdef CONFIG_HAS_NRF24
 static spi_device_handle_t s_spi_dev = NULL;
-static spi_host_device_t s_spi_host = SPI3_HOST;
+static spi_host_device_t s_spi_host = SPI2_HOST;
 static bool s_spi_bus_initialized_by_us = false;
 #endif
 static bool s_hw_ready = false;

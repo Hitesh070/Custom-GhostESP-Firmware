@@ -2339,8 +2339,18 @@ void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
     wifi_monitor_capture_active = true;
     wifi_reconnect_reset();
 
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_start());
+    esp_err_t mode_err = esp_wifi_set_mode(WIFI_MODE_STA);
+    if (mode_err != ESP_OK) {
+        ESP_LOGE("WIFI_MANAGER", "esp_wifi_set_mode(STA) failed: %s", esp_err_to_name(mode_err));
+        wifi_monitor_capture_active = false;
+        return;
+    }
+    esp_err_t start_err = esp_wifi_start();
+    if (start_err != ESP_OK && start_err != ESP_ERR_WIFI_STATE) {
+        ESP_LOGE("WIFI_MANAGER", "esp_wifi_start failed: %s", esp_err_to_name(start_err));
+        wifi_monitor_capture_active = false;
+        return;
+    }
 
 #if defined(CONFIG_IDF_TARGET_ESP32C5)
     // C5 AUTO band mode requires the multi-band APIs. Keep monitor PHY
@@ -2349,14 +2359,14 @@ void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
         .ghz_2g = WIFI_BW20,
         .ghz_5g = WIFI_BW20,
     };
-    ESP_ERROR_CHECK(esp_wifi_set_bandwidths(WIFI_IF_STA, &monitor_bandwidths));
+    (void)esp_wifi_set_bandwidths(WIFI_IF_STA, &monitor_bandwidths);
     wifi_protocols_t monitor_protocols = {
         .ghz_2g = WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N |
                   WIFI_PROTOCOL_LR,
         .ghz_5g = WIFI_PROTOCOL_11A | WIFI_PROTOCOL_11N |
                   WIFI_PROTOCOL_11AC | WIFI_PROTOCOL_11AX,
     };
-    ESP_ERROR_CHECK(esp_wifi_set_protocols(WIFI_IF_STA, &monitor_protocols));
+    (void)esp_wifi_set_protocols(WIFI_IF_STA, &monitor_protocols);
 #endif
 
     // Disconnect STA if connected — an associated STA locks the radio to the
@@ -2397,14 +2407,20 @@ void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
         filter.filter_mask = WIFI_PROMIS_FILTER_MASK_ALL;
     }
     
-    ESP_ERROR_CHECK(esp_wifi_set_promiscuous_filter(&filter));
+    esp_err_t filter_err = esp_wifi_set_promiscuous_filter(&filter);
+    if (filter_err != ESP_OK) {
+        ESP_LOGE("WIFI_MANAGER", "esp_wifi_set_promiscuous_filter failed: %s", esp_err_to_name(filter_err));
+    }
     if (callback == wifi_raw_scan_callback || callback == wifi_airspace_monitor_callback) {
         // The category mask alone does not enable control subtypes: IDF's
         // subtype mask defaults to zero. Include ACK/CTS/RTS/Block Ack in raw.
         wifi_promiscuous_filter_t ctrl_filter = {
             .filter_mask = WIFI_PROMIS_CTRL_FILTER_MASK_ALL,
         };
-        ESP_ERROR_CHECK(esp_wifi_set_promiscuous_ctrl_filter(&ctrl_filter));
+        esp_err_t ctrl_err = esp_wifi_set_promiscuous_ctrl_filter(&ctrl_filter);
+        if (ctrl_err != ESP_OK) {
+            ESP_LOGW("WIFI_MANAGER", "esp_wifi_set_promiscuous_ctrl_filter failed: %s", esp_err_to_name(ctrl_err));
+        }
     }
     ESP_LOGI("WIFI_MANAGER", "Set hardware filter mask: 0x%02" PRIx32, filter.filter_mask);
 
@@ -2412,7 +2428,13 @@ void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
     // Allocated here so RX callbacks never observe a half-built session.
     wifi_callbacks_monitor_tables_ensure();
 
-    ESP_ERROR_CHECK(esp_wifi_set_promiscuous(true));
+    esp_err_t promisc_enable_err = esp_wifi_set_promiscuous(true);
+    if (promisc_enable_err != ESP_OK) {
+        ESP_LOGE("WIFI_MANAGER", "esp_wifi_set_promiscuous(true) failed: %s", esp_err_to_name(promisc_enable_err));
+        wifi_callbacks_monitor_tables_release();
+        wifi_monitor_capture_active = false;
+        return;
+    }
 
     // Verify current channel for capture callbacks that use selected AP channel plans.
     if (callback_uses_selected_ap_capture_plan(callback)) {
@@ -2431,7 +2453,14 @@ void wifi_manager_start_monitor_mode(wifi_promiscuous_cb_t_t callback) {
         }
     }
 
-    ESP_ERROR_CHECK(esp_wifi_set_promiscuous_rx_cb(callback));
+    esp_err_t rxcb_err = esp_wifi_set_promiscuous_rx_cb(callback);
+    if (rxcb_err != ESP_OK) {
+        ESP_LOGE("WIFI_MANAGER", "esp_wifi_set_promiscuous_rx_cb failed: %s", esp_err_to_name(rxcb_err));
+        (void)esp_wifi_set_promiscuous(false);
+        wifi_callbacks_monitor_tables_release();
+        wifi_monitor_capture_active = false;
+        return;
+    }
 
     const char *cap_desc = "monitor";
     if (callback == wifi_eapol_scan_callback) cap_desc = "EAPOL";
@@ -2481,8 +2510,14 @@ void wifi_manager_stop_monitor_mode() {
         return;
     }
 
-    ESP_ERROR_CHECK(esp_wifi_set_promiscuous_rx_cb(NULL));
-    ESP_ERROR_CHECK(esp_wifi_set_promiscuous(false));
+    esp_err_t stop_cb_err = esp_wifi_set_promiscuous_rx_cb(NULL);
+    if (stop_cb_err != ESP_OK) {
+        ESP_LOGW("WIFI_MANAGER", "esp_wifi_set_promiscuous_rx_cb(NULL) returned: %s", esp_err_to_name(stop_cb_err));
+    }
+    esp_err_t stop_promisc_err = esp_wifi_set_promiscuous(false);
+    if (stop_promisc_err != ESP_OK) {
+        ESP_LOGW("WIFI_MANAGER", "esp_wifi_set_promiscuous(false) returned: %s", esp_err_to_name(stop_promisc_err));
+    }
     status_display_show_status("Monitor Stopped");
 
     // Stop ALL channel hopping timers
@@ -3721,8 +3756,8 @@ static bool bssid_already_listed(const uint8_t *bssid) {
     return false;
 }
 static void live_ap_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
-    if (type != WIFI_PKT_MGMT) return;
-    const wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
+    if (!buf || type != WIFI_PKT_MGMT) return;
+    const wifi_promiscuous_pkt_t *pkt = (const wifi_promiscuous_pkt_t *)buf;
     if (pkt->rx_ctrl.sig_len < 36) return;
     const uint8_t *payload = pkt->payload;
     uint8_t frame_subtype = (payload[0] & 0xF0) >> 4;
@@ -3851,8 +3886,14 @@ static void live_ap_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
 
 void wifi_manager_start_live_ap_scan(void) {
     ap_manager_stop_services();
-    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_start());
+    esp_err_t mode_err = esp_wifi_set_mode(WIFI_MODE_STA);
+    if (mode_err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to set STA mode for live scan: %s", esp_err_to_name(mode_err));
+    }
+    esp_err_t start_err = esp_wifi_start();
+    if (start_err != ESP_OK && start_err != ESP_ERR_WIFI_STATE) {
+        ESP_LOGE(TAG, "Failed to start WiFi for live scan: %s", esp_err_to_name(start_err));
+    }
     if (scanned_aps) { free(scanned_aps); scanned_aps = NULL; }
     ap_count = 0;
     live_last_printed_index = 0;
@@ -5077,11 +5118,13 @@ int wifi_manager_get_track_closeness(void) {
 }
 
 static void wifi_track_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
+    if (!buf) return;
     if (type != WIFI_PKT_MGMT && type != WIFI_PKT_DATA) return;
     bool is_mgmt = (type == WIFI_PKT_MGMT);
 
-    const wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
-    const wifi_ieee80211_packet_t *ipkt = (wifi_ieee80211_packet_t *)pkt->payload;
+    const wifi_promiscuous_pkt_t *pkt = (const wifi_promiscuous_pkt_t *)buf;
+    if (pkt->rx_ctrl.sig_len < sizeof(wifi_ieee80211_mac_hdr_t)) return;
+    const wifi_ieee80211_packet_t *ipkt = (const wifi_ieee80211_packet_t *)pkt->payload;
     wifi_ieee80211_mac_hdr_t hdr_copy;
     memcpy(&hdr_copy, &ipkt->hdr, sizeof(hdr_copy));
     const wifi_ieee80211_mac_hdr_t *hdr = &hdr_copy;
@@ -5116,8 +5159,13 @@ static void wifi_track_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
 
     if (!match) return;
 
-    if (rssi > tracking_max_rssi) tracking_max_rssi = rssi;
-    if (rssi < tracking_min_rssi) tracking_min_rssi = rssi;
+    if (tracking_min_rssi > 0 || tracking_max_rssi < -120) {
+        tracking_min_rssi = rssi;
+        tracking_max_rssi = rssi;
+    } else {
+        if (rssi > tracking_max_rssi) tracking_max_rssi = rssi;
+        if (rssi < tracking_min_rssi) tracking_min_rssi = rssi;
+    }
 
     rssi_median_push(&tracking_med, rssi);
     int8_t med = rssi_median_get(&tracking_med);
@@ -5140,15 +5188,20 @@ static void wifi_track_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
         strcat(bar_str, "#");
     }
 
-    int close_pct = wifi_manager_get_track_closeness();
-    if (close_pct >= 0) {
-        glog("%s %d dBm (min:%d max:%d close:%d%%)%s\n", bar_str, med,
-             tracking_min_rssi, tracking_max_rssi, close_pct, direction);
-    } else {
-        glog("%s %d dBm (min:%d max:%d)%s\n", bar_str, med,
-             tracking_min_rssi, tracking_max_rssi, direction);
+    int64_t now_us = esp_timer_get_time();
+    static int64_t s_last_track_log_us = 0;
+    if (now_us - s_last_track_log_us >= 150000) {
+        s_last_track_log_us = now_us;
+        int close_pct = wifi_manager_get_track_closeness();
+        if (close_pct >= 0) {
+            glog("%s %d dBm (min:%d max:%d close:%d%%)%s\n", bar_str, med,
+                 tracking_min_rssi, tracking_max_rssi, close_pct, direction);
+        } else {
+            glog("%s %d dBm (min:%d max:%d)%s\n", bar_str, med,
+                 tracking_min_rssi, tracking_max_rssi, direction);
+        }
     }
-    tracking_last_rx_us = esp_timer_get_time();
+    tracking_last_rx_us = now_us;
 }
 
 bool wifi_manager_get_track_status(int8_t *out_rssi, bool *out_fresh) {
@@ -5223,8 +5276,8 @@ void wifi_manager_track_sta(void) {
     }
     
     tracking_last_rssi = -100;
-    tracking_min_rssi = -100;
-    tracking_max_rssi = -127;
+    tracking_min_rssi = 127;
+    tracking_max_rssi = -128;
     rssi_median_reset(&tracking_med);
     tracking_last_rx_us = 0; // no station packet seen yet
     ap_tracking_active = false;
@@ -5250,8 +5303,8 @@ void wifi_manager_track_bssid(const uint8_t bssid[6], uint8_t channel, const cha
     selected_ap.ssid[sizeof(selected_ap.ssid) - 1] = '\0';
 
     tracking_last_rssi = -100;
-    tracking_min_rssi = -100;
-    tracking_max_rssi = -127;
+    tracking_min_rssi = 127;
+    tracking_max_rssi = -128;
     rssi_median_reset(&tracking_med);
     tracking_last_rx_us = 0;
     ap_tracking_active = true;

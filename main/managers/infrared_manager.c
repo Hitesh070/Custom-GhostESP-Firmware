@@ -712,25 +712,31 @@ static bool send_rmt(const uint32_t *timings, size_t count, uint32_t freq, float
     static rmt_channel_handle_t tx_chan = NULL;
     static rmt_encoder_handle_t copy_encoder = NULL;
     static size_t chan_symbols = 0;
+    static gpio_num_t s_last_tx_pin = GPIO_NUM_NC;
 
-    if (tx_chan && hw_symbols != chan_symbols) {
+    gpio_num_t cur_tx_pin = infrared_get_tx_pin();
+    if (tx_chan && (hw_symbols != chan_symbols || s_last_tx_pin != cur_tx_pin)) {
         rmt_disable(tx_chan);
         rmt_del_channel(tx_chan);
         tx_chan = NULL;
         chan_symbols = 0;
+        if (copy_encoder) {
+            rmt_del_encoder(copy_encoder);
+            copy_encoder = NULL;
+        }
     }
 
     if (!tx_chan) {
         rmt_tx_channel_config_t cfg = {
             .clk_src = RMT_CLK_SRC_DEFAULT,
 #ifdef CONFIG_HAS_INFRARED
-            .gpio_num = infrared_get_tx_pin(),
+            .gpio_num = cur_tx_pin,
 #else
             .gpio_num = GPIO_NUM_NC,
 #endif
             .mem_block_symbols = hw_symbols,
             .resolution_hz = 1000000,
-            .trans_queue_depth = 1,
+            .trans_queue_depth = 4,
             .flags = {.with_dma = false, .invert_out = false}
         };
         if (rmt_new_tx_channel(&cfg, &tx_chan) != ESP_OK) {
@@ -738,9 +744,12 @@ static bool send_rmt(const uint32_t *timings, size_t count, uint32_t freq, float
         }
 
         if (rmt_enable(tx_chan) != ESP_OK) {
+            rmt_del_channel(tx_chan);
+            tx_chan = NULL;
             return false;
         }
         chan_symbols = hw_symbols;
+        s_last_tx_pin = cur_tx_pin;
     }
 
     if (!copy_encoder) {
@@ -822,7 +831,9 @@ bool infrared_manager_transmit(const infrared_signal_t *signal) {
 #endif
 
 #ifdef CONFIG_HAS_INFRARED
-    gpio_set_level(infrared_get_tx_pin(), 1);
+    // Ensure idle low state before transmission; driving high (DC) without modulation
+    // can burn out the IR LED or overdrive the driving transistor/MOSFET.
+    gpio_set_level(infrared_get_tx_pin(), 0);
 #endif
     rgb_manager_set_color(&rgb_manager, -1, 51, 0, 51, false);
     bool ok = false;

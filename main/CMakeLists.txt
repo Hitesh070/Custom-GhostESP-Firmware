@@ -23,6 +23,9 @@ if(idf_target STREQUAL "esp32s2")
     list(FILTER app_sources EXCLUDE REGEX "scans/ble/.*\\.c")
     list(FILTER app_sources EXCLUDE REGEX "managers/ble_manager\\.c")
 endif()
+# Centralized Hardware Board Configuration (7Semi ESP32-S3 God Mode V2)
+list(APPEND app_sources "${CMAKE_SOURCE_DIR}/main/hardware/board_config.c")
+
 # Explicitly add hooked-up Flipper parsers
 list(APPEND app_sources
     "${CMAKE_SOURCE_DIR}/main/managers/nfc/flipper_parsers/smartrider.c"
@@ -124,6 +127,7 @@ endif()
 
 # Optionally add extra include directories
 set(extra_includes "")
+list(APPEND extra_includes "${CMAKE_SOURCE_DIR}/include/hardware")
 list(APPEND extra_includes "${CMAKE_SOURCE_DIR}/components/M5GFX/src")
 if(CONFIG_USE_IO_EXPANDER)
     list(APPEND extra_includes "${CMAKE_SOURCE_DIR}/components/io_manager")

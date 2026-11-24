@@ -130,11 +130,11 @@ static void ir_universal_send_task(void *arg) {
             for (size_t i = 0; i < total && !g_ir_universal_send_cancel; ++i) {
                 infrared_signal_t sig;
                 if (!universal_ir_get_signal(i, &sig)) continue;
-                if (strcmp(sig.name, button) != 0) {
+                if (!universal_ir_matches_action(i, button)) {
                     infrared_manager_free_signal(&sig);
                     continue;
                 }
-                glog("IR: universal sendall %s [builtin %d]\n", button, (int)i);
+                glog("IR: universal sendall %s [builtin %d: %s %s]\n", button, (int)i, sig.name, sig.payload.message.protocol);
                 bool ok = infrared_manager_transmit(&sig);
                 glog("IR: universal sendall %s -> %s\n", button, ok ? "OK" : "FAIL");
                 sent++;
@@ -333,13 +333,17 @@ static void ir_rx_learn_task(void *arg) {
 
 void handle_ir_cmd(int argc, char **argv) {
     if (argc < 2) {
-        glog("Usage: ir <send|inline|list|show|universals|rx|dazzler>\n");
+        glog("Usage: ir <send|inline|list|show|universals|rx|learn|raw|info|test|dazzler>\n");
         glog("  ir send <path|remote_index> [button_index]\n");
         glog("  ir inline\n");
         glog("  ir list [path]\n");
         glog("  ir show <path|remote_index>\n");
         glog("  ir universals <list|send|sendall> ...\n");
-        glog("  ir rx\n");
+        glog("  ir rx [timeout_sec]\n");
+        glog("  ir learn [path]\n");
+        glog("  ir raw <freq_hz> <duty_0_to_1> <t1_us> <t2_us> ...\n");
+        glog("  ir info                          - Show transceiver and pin status\n");
+        glog("  ir test                          - Hardware self-test\n");
         glog("  ir dazzler [stop]\n");
         return;
     }
@@ -560,20 +564,29 @@ void handle_ir_cmd(int argc, char **argv) {
             }
 
             size_t count = universal_ir_get_signal_count();
+            glog("\nBuilt-in Universal Signals: %zu available across categories:\n", count);
+            glog("  - Power: %zu | Mute: %zu | Vol+: %zu | Vol-: %zu | Ch+: %zu | Ch-: %zu | Input: %zu\n",
+                 universal_ir_count_by_action(UNIVERSAL_IR_ACTION_POWER),
+                 universal_ir_count_by_action(UNIVERSAL_IR_ACTION_MUTE),
+                 universal_ir_count_by_action(UNIVERSAL_IR_ACTION_VOL_UP),
+                 universal_ir_count_by_action(UNIVERSAL_IR_ACTION_VOL_DOWN),
+                 universal_ir_count_by_action(UNIVERSAL_IR_ACTION_CH_UP),
+                 universal_ir_count_by_action(UNIVERSAL_IR_ACTION_CH_DOWN),
+                 universal_ir_count_by_action(UNIVERSAL_IR_ACTION_INPUT));
             if (show_all) {
-                glog("\nBuilt-in Universal Signals (%zu):\n", count);
+                glog("\nDetailed Signals List:\n");
                 for (size_t i = 0; i < count; i++) {
                     infrared_signal_t sig;
                     if (universal_ir_get_signal(i, &sig)) {
-                         glog("  [%d] %s (%s) Addr: 0x%lX Cmd: 0x%lX\n", (int)i, 
+                         glog("  [%d] %s (%s) [%s] Addr: 0x%lX Cmd: 0x%lX\n", (int)i, 
                               sig.name, sig.payload.message.protocol,
+                              universal_ir_action_to_string(universal_ir_get_signal_action(i)),
                               (unsigned long)sig.payload.message.address,
                               (unsigned long)sig.payload.message.command);
                     }
                 }
             } else {
-                glog("\nBuilt-in Universal Signals: %zu available.\n", count);
-                glog("Use 'ir universals list -all' to list them.\n");
+                glog("Use 'ir universals list -all' to list them individually.\n");
             }
             return;
         }
@@ -599,7 +612,7 @@ void handle_ir_cmd(int argc, char **argv) {
                 return;
             }
             if (argc < 4) {
-                glog("Usage: ir universals sendall <file|TURNHISTVOFF> <button_name> [delay_ms]\n");
+                glog("Usage: ir universals sendall <file|TURNHISTVOFF> [button_name] [delay_ms]\n");
                 return;
             }
             const char *arg = argv[3];
@@ -614,7 +627,7 @@ void handle_ir_cmd(int argc, char **argv) {
                         if (d > 0) delay_ms = (uint32_t)d;
                     }
                 } else {
-                    button_name = "Power Off";
+                    button_name = "POWER";
                     if (argc >= 5) {
                         int d = atoi(argv[4]);
                         if (d > 0) delay_ms = (uint32_t)d;
@@ -740,6 +753,97 @@ void handle_ir_cmd(int argc, char **argv) {
         } else {
             glog("IR_DAZZLER:FAILED\n");
         }
+        return;
+    }
+
+    if (strcmp(sub, "raw") == 0) {
+        if (argc < 5) {
+            glog("Usage: ir raw <freq_hz> <duty_0_to_1> <t1_us> <t2_us> ...\n");
+            glog("Example: ir raw 38000 0.33 9000 4500 560 1690 560 560\n");
+            return;
+        }
+        uint32_t freq = (uint32_t)strtoul(argv[2], NULL, 10);
+        float duty = strtof(argv[3], NULL);
+        size_t count = argc - 4;
+        uint32_t *timings = (uint32_t *)malloc(count * sizeof(uint32_t));
+        if (!timings) {
+            glog("IR: out of memory for raw timings\n");
+            return;
+        }
+        for (size_t i = 0; i < count; i++) {
+            timings[i] = (uint32_t)strtoul(argv[4 + i], NULL, 10);
+        }
+        infrared_signal_t sig;
+        memset(&sig, 0, sizeof(sig));
+        strncpy(sig.name, "RawCLI", sizeof(sig.name) - 1);
+        sig.is_raw = true;
+        sig.payload.raw.frequency = freq ? freq : 38000;
+        sig.payload.raw.duty_cycle = (duty > 0.0f && duty < 1.0f) ? duty : 0.33f;
+        sig.payload.raw.timings = timings;
+        sig.payload.raw.timings_size = count;
+        ghostchi_manager_add_xp(4);
+        bool ok = infrared_manager_transmit(&sig);
+        glog("IR raw transmit (%zu samples, %lu Hz, duty %.2f) -> %s\n",
+             count, (unsigned long)sig.payload.raw.frequency, (double)sig.payload.raw.duty_cycle, ok ? "OK" : "FAIL");
+        free(timings);
+        return;
+    }
+
+    if (strcmp(sub, "info") == 0 || strcmp(sub, "status") == 0) {
+        gpio_num_t tx_pin = infrared_get_tx_pin();
+        gpio_num_t rx_pin = infrared_get_rx_pin();
+        int32_t tx_ovr = settings_get_ir_tx_pin(&G_Settings);
+        int32_t rx_ovr = settings_get_ir_rx_pin(&G_Settings);
+        glog("=== Infrared Peripheral Status ===\n");
+        glog("  TX Pin:       GPIO%d (%s)\n", (int)tx_pin, tx_ovr >= 0 ? "NVS override" : "compiled default");
+        glog("  RX Pin:       GPIO%d (%s)\n", (int)rx_pin, rx_ovr >= 0 ? "NVS override" : "compiled default");
+        glog("  RX Subsystem: %s\n", infrared_manager_rx_is_initialized() ? "ACTIVE" : "IDLE/READY");
+        glog("  Dazzler:      %s\n", infrared_manager_dazzler_is_active() ? "RUNNING" : "STOPPED");
+        glog("  Universal DB: %zu signals\n", universal_ir_get_signal_count());
+        glog("    - Power:    %zu\n", universal_ir_count_by_action(UNIVERSAL_IR_ACTION_POWER));
+        glog("    - Mute:     %zu\n", universal_ir_count_by_action(UNIVERSAL_IR_ACTION_MUTE));
+        glog("    - Vol+:     %zu\n", universal_ir_count_by_action(UNIVERSAL_IR_ACTION_VOL_UP));
+        glog("    - Vol-:     %zu\n", universal_ir_count_by_action(UNIVERSAL_IR_ACTION_VOL_DOWN));
+        glog("    - Ch+:      %zu\n", universal_ir_count_by_action(UNIVERSAL_IR_ACTION_CH_UP));
+        glog("    - Ch-:      %zu\n", universal_ir_count_by_action(UNIVERSAL_IR_ACTION_CH_DOWN));
+        glog("    - Input:    %zu\n", universal_ir_count_by_action(UNIVERSAL_IR_ACTION_INPUT));
+        return;
+    }
+
+    if (strcmp(sub, "test") == 0) {
+        glog("=== IR Hardware Self-Test ===\n");
+        gpio_num_t tx_pin = infrared_get_tx_pin();
+        gpio_num_t rx_pin = infrared_get_rx_pin();
+        glog("1. Checking GPIO configurations...\n");
+        glog("   TX GPIO%d: %s\n", (int)tx_pin, (tx_pin >= 0 && tx_pin < GPIO_NUM_MAX) ? "VALID" : "INVALID");
+        glog("   RX GPIO%d: %s\n", (int)rx_pin, (rx_pin >= 0 && rx_pin < GPIO_NUM_MAX) ? "VALID" : "INVALID");
+        glog("2. Testing Universal IR database...\n");
+        size_t count = universal_ir_get_signal_count();
+        if (count > 0) {
+            infrared_signal_t sig;
+            if (universal_ir_get_signal(0, &sig)) {
+                glog("   Universal IR Table: OK (%zu signals loaded, sample: %s [%s])\n",
+                     count, sig.name, sig.payload.message.protocol);
+            } else {
+                glog("   Universal IR Table: FAIL reading index 0\n");
+            }
+        } else {
+            glog("   Universal IR Table: EMPTY\n");
+        }
+        glog("3. Testing RX Subsystem...\n");
+        bool was_rx = infrared_manager_rx_is_initialized();
+        if (!was_rx) {
+            if (infrared_manager_rx_init()) {
+                glog("   RX Init / ISR registration: OK\n");
+                infrared_manager_rx_deinit();
+                glog("   RX Deinit: OK\n");
+            } else {
+                glog("   RX Init: FAIL (check pin / hardware conflict)\n");
+            }
+        } else {
+            glog("   RX is currently running actively: OK\n");
+        }
+        glog("IR self-test completed.\n");
         return;
     }
 

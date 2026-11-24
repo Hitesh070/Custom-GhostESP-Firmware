@@ -60,6 +60,7 @@ static bool s_spi_bus_owned_by_sd = false;
 static int s_spi_host_id = -1;
 typedef enum { MOUNT_NONE = 0, MOUNT_VIRTUAL, MOUNT_SDMMC, MOUNT_SPI } sd_mount_type_t;
 static sd_mount_type_t s_mount_type = MOUNT_NONE;
+static sd_card_status_t s_sd_status = SD_STATUS_NOT_INITIALIZED;
 #if defined(CONFIG_CROWPANEL_ADVANCED_P4)
 static sd_pwr_ctrl_handle_t s_crowpanel_sd_power = NULL;
 #endif
@@ -437,22 +438,95 @@ static esp_err_t sd_card_mount_spi_with_retry(
 
 
 
-sd_card_manager_t sd_card_manager = { // Change this based on board config
+sd_card_manager_t sd_card_manager = {
     .card = NULL,
     .is_initialized = false,
+#ifdef CONFIG_USING_MMC_1_BIT
+#ifdef CONFIG_SD_MMC_CLK
+    .clkpin = CONFIG_SD_MMC_CLK,
+#else
+    .clkpin = -1,
+#endif
+#ifdef CONFIG_SD_MMC_CMD
+    .cmdpin = CONFIG_SD_MMC_CMD,
+#else
+    .cmdpin = -1,
+#endif
+#ifdef CONFIG_SD_MMC_D0
+    .d0pin = CONFIG_SD_MMC_D0,
+#else
+    .d0pin = -1,
+#endif
+    .d1pin = -1,
+    .d2pin = -1,
+    .d3pin = -1,
+#elif defined(CONFIG_USING_MMC)
     .clkpin = 19,
     .cmdpin = 18,
     .d0pin = 20,
     .d1pin = 21,
     .d2pin = 22,
     .d3pin = 23,
+#else
+    .clkpin = -1,
+    .cmdpin = -1,
+    .d0pin = -1,
+    .d1pin = -1,
+    .d2pin = -1,
+    .d3pin = -1,
+#endif
 #ifdef CONFIG_USING_SPI
+#ifdef CONFIG_SD_SPI_CS_PIN
     .spi_cs_pin = CONFIG_SD_SPI_CS_PIN,
+#else
+    .spi_cs_pin = -1,
+#endif
+#ifdef CONFIG_SD_SPI_CLK_PIN
     .spi_clk_pin = CONFIG_SD_SPI_CLK_PIN,
+#else
+    .spi_clk_pin = -1,
+#endif
+#ifdef CONFIG_SD_SPI_MISO_PIN
     .spi_miso_pin = CONFIG_SD_SPI_MISO_PIN,
+#else
+    .spi_miso_pin = -1,
+#endif
+#ifdef CONFIG_SD_SPI_MOSI_PIN
     .spi_mosi_pin = CONFIG_SD_SPI_MOSI_PIN
+#else
+    .spi_mosi_pin = -1
+#endif
+#else
+    .spi_cs_pin = -1,
+    .spi_clk_pin = -1,
+    .spi_miso_pin = -1,
+    .spi_mosi_pin = -1
 #endif
 };
+
+sd_card_status_t sd_card_get_status(void) {
+    return s_sd_status;
+}
+
+const char *sd_card_get_status_str(void) {
+    switch (s_sd_status) {
+        case SD_STATUS_MOUNTED:          return "Mounted";
+        case SD_STATUS_NO_CARD:          return "No card detected";
+        case SD_STATUS_UNFORMATTED:      return "Unformatted/corrupt filesystem";
+        case SD_STATUS_BUS_ERROR:        return "Hardware/bus error";
+        case SD_STATUS_UNMOUNTED:        return "Unmounted";
+        case SD_STATUS_NOT_INITIALIZED:
+        default:                         return "Not initialized";
+    }
+}
+
+bool sd_card_is_mounted(void) {
+    return sd_card_manager.is_initialized;
+}
+
+bool sd_card_is_present(void) {
+    return (s_sd_status == SD_STATUS_MOUNTED || sd_card_manager.card != NULL);
+}
 
 #if defined(CONFIG_IDF_TARGET_ESP32S3)
 static int choose_free_s3_sd_spi_host(const spi_bus_config_t *bus_config, int dma_channel) {
@@ -750,13 +824,17 @@ esp_err_t sd_card_init(void) {
   sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT();
   slot_config.width = 1;
 
-  slot_config.clk = CONFIG_SD_MMC_CLK;
-  slot_config.cmd = CONFIG_SD_MMC_CMD;
-  slot_config.d0 = CONFIG_SD_MMC_D0;
+  int clk = (sd_card_manager.clkpin >= 0) ? sd_card_manager.clkpin : CONFIG_SD_MMC_CLK;
+  int cmd = (sd_card_manager.cmdpin >= 0) ? sd_card_manager.cmdpin : CONFIG_SD_MMC_CMD;
+  int d0  = (sd_card_manager.d0pin >= 0)  ? sd_card_manager.d0pin  : CONFIG_SD_MMC_D0;
 
-  gpio_set_pull_mode(CONFIG_SD_MMC_D0, GPIO_PULLUP_ONLY);  // CLK
-  gpio_set_pull_mode(CONFIG_SD_MMC_CLK, GPIO_PULLUP_ONLY); // CMD
-  gpio_set_pull_mode(CONFIG_SD_MMC_CMD, GPIO_PULLUP_ONLY); // D0
+  slot_config.clk = clk;
+  slot_config.cmd = cmd;
+  slot_config.d0  = d0;
+
+  gpio_set_pull_mode(clk, GPIO_PULLUP_ONLY); // CLK
+  gpio_set_pull_mode(cmd, GPIO_PULLUP_ONLY); // CMD
+  gpio_set_pull_mode(d0,  GPIO_PULLUP_ONLY); // D0
 
   slot_config.gpio_cd = GPIO_NUM_NC; // Disable Card Detect pin
   slot_config.gpio_wp = GPIO_NUM_NC; // Disable Write Protect pin
@@ -769,6 +847,8 @@ esp_err_t sd_card_init(void) {
   ret = esp_vfs_fat_sdmmc_mount("/mnt", &host, &slot_config, &mount_config,
                                 &sd_card_manager.card);
     if (ret != ESP_OK) {
+    s_sd_status = (ret == ESP_ERR_TIMEOUT) ? SD_STATUS_NO_CARD :
+                  ((ret == ESP_FAIL) ? SD_STATUS_UNFORMATTED : SD_STATUS_BUS_ERROR);
     if (ret == ESP_FAIL) {
       printf("Failed to mount filesystem. If you want the card to be "
              "formatted, set format_if_mount_failed = true.\n");
@@ -790,6 +870,7 @@ esp_err_t sd_card_init(void) {
 
   sd_card_manager.is_initialized = true;
   s_mount_type = MOUNT_SDMMC;
+  s_sd_status = SD_STATUS_MOUNTED;
   sdmmc_card_print_info(sd_card_manager.card);
 
   sd_card_setup_directory_structure();
@@ -830,6 +911,8 @@ esp_err_t sd_card_init(void) {
   ret = esp_vfs_fat_sdmmc_mount("/mnt", &host, &slot_config, &mount_config,
                                 &sd_card_manager.card);
   if (ret != ESP_OK) {
+    s_sd_status = (ret == ESP_ERR_TIMEOUT) ? SD_STATUS_NO_CARD :
+                  ((ret == ESP_FAIL) ? SD_STATUS_UNFORMATTED : SD_STATUS_BUS_ERROR);
     if (ret == ESP_FAIL) {
       printf("Failed to mount filesystem. If you want the card to be "
              "formatted, set format_if_mount_failed = true.\n");
@@ -844,6 +927,7 @@ esp_err_t sd_card_init(void) {
   }
 
   sd_card_manager.is_initialized = true;
+  s_sd_status = SD_STATUS_MOUNTED;
   sdmmc_card_print_info(sd_card_manager.card);
 
   sd_card_setup_directory_structure();
@@ -1171,6 +1255,8 @@ esp_err_t sd_card_init(void) {
            esp_err_to_name(ret), shared_spi_guard_active, display_was_suspended);
   shared_spi_guard_resume_lvgl_if_needed(shared_spi_guard_active, ret == ESP_OK);
   if (ret != ESP_OK) {
+    s_sd_status = (ret == ESP_ERR_TIMEOUT) ? SD_STATUS_NO_CARD :
+                  ((ret == ESP_FAIL) ? SD_STATUS_UNFORMATTED : SD_STATUS_BUS_ERROR);
     ESP_LOGD(TAG, "Mount failed, bus_init_success=%d", bus_init_success);
     printf("Failed to mount filesystem: %s\n", esp_err_to_name(ret));
     (void)bus_init_success;
@@ -1187,6 +1273,7 @@ esp_err_t sd_card_init(void) {
 
   sd_card_manager.is_initialized = true;
   s_mount_type = MOUNT_SPI;
+  s_sd_status = SD_STATUS_MOUNTED;
   sdmmc_card_print_info(sd_card_manager.card);
 
   sd_card_setup_directory_structure();
@@ -1421,6 +1508,7 @@ void sd_card_unmount_with_context(sd_unmount_context_t context) {
     sd_card_manager.is_initialized = false;
     sd_card_manager.card = NULL;
     s_mount_type = MOUNT_NONE;
+    s_sd_status = SD_STATUS_UNMOUNTED;
 #if defined(CONFIG_CROWPANEL_ADVANCED_P4)
     if (s_crowpanel_sd_power) {
       sd_pwr_ctrl_del_on_chip_ldo(s_crowpanel_sd_power);
@@ -1463,6 +1551,7 @@ void sd_card_unmount_with_context(sd_unmount_context_t context) {
     sd_card_manager.is_initialized = false;
     sd_card_manager.card = NULL;
     s_mount_type = MOUNT_NONE;
+    s_sd_status = SD_STATUS_UNMOUNTED;
 #if defined(CONFIG_CROWPANEL_ADVANCED_P4)
     if (s_crowpanel_sd_power) {
       sd_pwr_ctrl_del_on_chip_ldo(s_crowpanel_sd_power);
@@ -1504,6 +1593,7 @@ void sd_card_unmount_with_context(sd_unmount_context_t context) {
     sd_card_manager.is_initialized = false;
     sd_card_manager.card = NULL;
     s_mount_type = MOUNT_NONE;
+    s_sd_status = SD_STATUS_UNMOUNTED;
     s_sd_jit_mount_depth = 0;
     s_sd_jit_display_suspended = false;
     

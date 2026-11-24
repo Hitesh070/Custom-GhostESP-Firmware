@@ -3279,28 +3279,29 @@ static void log_oui_match_notice(pineap_network_t *network) {
 }
 
 void wifi_pineap_detector_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
-    if (!pineap_detection_active || type != WIFI_PKT_MGMT)
+    if (!buf || !pineap_detection_active || type != WIFI_PKT_MGMT)
         return;
 
-    const wifi_promiscuous_pkt_t *ppkt = (wifi_promiscuous_pkt_t *)buf;
-    const wifi_ieee80211_packet_t *ipkt = (wifi_ieee80211_packet_t *)ppkt->payload;
-    wifi_ieee80211_mac_hdr_t hdr_copy;
-    memcpy(&hdr_copy, &ipkt->hdr, sizeof(wifi_ieee80211_mac_hdr_t));  // Copy to avoid unaligned pointer
-    const wifi_ieee80211_mac_hdr_t *hdr = &hdr_copy;
+    const wifi_promiscuous_pkt_t *ppkt = (const wifi_promiscuous_pkt_t *)buf;
+
+    // Early filtering must precede header copy
+    if (!is_packet_valid(ppkt, type)) {
+        return;
+    }
 
     // Only process beacon frames
     if (!is_beacon_packet(ppkt))
         return;
 
-    // Early filtering
-    if (!is_packet_valid(ppkt, type)) {
-        return;
-    }
-
     // Channel filtering
     if (!is_on_target_channel(ppkt, current_channel)) {
         return;
     }
+
+    const wifi_ieee80211_packet_t *ipkt = (const wifi_ieee80211_packet_t *)ppkt->payload;
+    wifi_ieee80211_mac_hdr_t hdr_copy;
+    memcpy(&hdr_copy, &ipkt->hdr, sizeof(wifi_ieee80211_mac_hdr_t));  // Copy to avoid unaligned pointer
+    const wifi_ieee80211_mac_hdr_t *hdr = &hdr_copy;
 
     // Find or create network
     pineap_network_t *network = find_or_create_network(hdr->addr3);
@@ -3667,7 +3668,7 @@ void wardriving_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
 
 void wifi_probe_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
     // Early filtering for management frames only
-    if (type != WIFI_PKT_MGMT) return;
+    if (!buf || type != WIFI_PKT_MGMT) return;
     
     wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
     
@@ -3681,7 +3682,7 @@ void wifi_probe_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
 
 void wifi_beacon_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
     // Early filtering for management frames only
-    if (type != WIFI_PKT_MGMT) return;
+    if (!buf || type != WIFI_PKT_MGMT) return;
     
     wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
     
@@ -3699,7 +3700,7 @@ void wifi_beacon_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
 
 void wifi_deauth_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
     // Early filtering for management frames only
-    if (type != WIFI_PKT_MGMT) return;
+    if (!buf || type != WIFI_PKT_MGMT) return;
     
     wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
     
@@ -3716,7 +3717,7 @@ void wifi_deauth_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
 }
 
 void wifi_pwn_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
-    if (type != WIFI_PKT_MGMT)
+    if (!buf || type != WIFI_PKT_MGMT)
         return;
     wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
     if (!is_packet_valid(pkt, type)) return;
@@ -3726,9 +3727,8 @@ void wifi_pwn_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
 }
 
 void wifi_eapol_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
+    if (!buf || type == WIFI_PKT_MISC) return;
     wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
-
-    if (type == WIFI_PKT_MISC) return;
     if (pkt->rx_ctrl.sig_len < 24) return;
 
     /* Control frames carry no EAPOL, but the promiscuous filter explicitly
@@ -3856,16 +3856,18 @@ void wifi_eapol_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
 }
 
 void wifi_wps_detection_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
-    if (type != WIFI_PKT_MGMT) {
+    if (!buf || type != WIFI_PKT_MGMT) {
         return;
     }
+    const wifi_promiscuous_pkt_t *pkt = (const wifi_promiscuous_pkt_t *)buf;
+    if (pkt->rx_ctrl.sig_len < 36) return;
+
     if (!detected_wps_networks) {
         detected_wps_networks = mon_tbl_calloc(MAX_WPS_NETWORKS, sizeof(*detected_wps_networks));
         if (!detected_wps_networks) return;
     }
 
-    const wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
-    const wifi_ieee80211_packet_t *ipkt = (wifi_ieee80211_packet_t *)pkt->payload;
+    const wifi_ieee80211_packet_t *ipkt = (const wifi_ieee80211_packet_t *)pkt->payload;
     wifi_ieee80211_mac_hdr_t hdr_copy;
     memcpy(&hdr_copy, &ipkt->hdr, sizeof(wifi_ieee80211_mac_hdr_t));
     const wifi_ieee80211_mac_hdr_t *hdr = &hdr_copy;
@@ -4173,6 +4175,7 @@ static uint32_t packets_processed = 0;
 
 // Early filtering helper - checks basic packet validity
 static inline bool is_packet_valid(const wifi_promiscuous_pkt_t *pkt, wifi_promiscuous_pkt_type_t type) {
+    if (!pkt) return false;
     total_packets_received++;
     
     // Drop MISC packets immediately
@@ -4222,7 +4225,7 @@ bool g_listen_probes_save_to_sd = false;
 
 void wifi_listen_probes_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
     // Early filtering for management frames only
-    if (type != WIFI_PKT_MGMT) return;
+    if (!buf || type != WIFI_PKT_MGMT) return;
 
     wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
     

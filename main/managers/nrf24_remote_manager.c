@@ -52,7 +52,7 @@ static volatile bool s_paused = false;
 static volatile bool s_stream_to_peer = false;
 
 static spi_device_handle_t s_spi_dev = NULL;
-static spi_host_device_t s_spi_host = SPI3_HOST;
+static spi_host_device_t s_spi_host = SPI2_HOST;
 static bool s_spi_bus_initialized_by_us = false;
 
 static uint8_t s_levels[NRF24_CHANNEL_COUNT];
@@ -264,8 +264,18 @@ static esp_err_t nrf24_hw_start(void) {
 
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "NRF24 init sequence failed: %s", esp_err_to_name(err));
+        nrf24_set_last_error("init sequence failed");
         nrf24_hw_stop();
         return err;
+    }
+
+    uint8_t cfg_val = 0;
+    err = nrf24_read_reg(NRF_REG_CONFIG, &cfg_val);
+    if (err != ESP_OK || (cfg_val & 0x03) != 0x03) {
+        ESP_LOGE(TAG, "NRF24 readback check failed: read 0x%02X (expected 0x03)", cfg_val);
+        nrf24_set_last_error("hardware readback failed");
+        nrf24_hw_stop();
+        return ESP_FAIL;
     }
 
     ets_delay_us(2000);
@@ -413,6 +423,10 @@ bool nrf24_remote_manager_start(bool stream_to_peer) {
 
 void nrf24_remote_manager_stop(void) {
     s_stop_requested = true;
+    int wait_cycles = 15;
+    while (s_nrf24_task != NULL && wait_cycles-- > 0) {
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
 }
 
 void nrf24_remote_manager_set_paused(bool paused) {
