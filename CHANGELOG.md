@@ -4,6 +4,39 @@
 Untagged entries are by ([@jaylikesbunda](https://github.com/jaylikesbunda)). A trailing `@handle` credits a guest contributor for that specific line. "Ported from / adapted from" credits the upstream source a feature was based on, not GhostESP authorship.
 
 
+## v3.0.0 – GhostESP God Mode V3 Master Security Research & Ecosystem Release
+
+### Added
+- **Multi-Vector Rogue AP & Evil Twin Detection Engine (`roguedetect`):**
+  - Standalone, passive multi-vector threat engine analyzing live 802.11 beacon and probe response frames.
+  - Duplicate SSID detection across non-matching BSSIDs with OUI vendor validation.
+  - Security downgrade classification (WPA3-SAE / WPA2-Enterprise downgrade to Open / WEP).
+  - Channel jump anomaly detection and RSSI delta spike alerts (>25 dBm jump).
+  - Threat score calculation (0–100%) and instant serial broadcast to Laptop Command Center.
+- **Passive 802.11 Deauth / Disassociation Storm Monitor (`deauthmon`):**
+  - Continuous sliding-window frame rate monitor tracking 802.11 Type 0x00 / Subtype 0x0C (Deauth) and 0x0A (Disassoc).
+  - Ring buffer recording transmitter MAC, target/victim MAC, BSSID, timestamp, and decoded IEEE 802.11 reason codes.
+  - Burst storm alarm threshold (>= 5 frames/sec) alerting operator of ongoing attacks.
+- **NRF24 RF Research Subsystem & Register Diagnostics (`nrf24lab`):**
+  - Full 24-register bitfield inspector decoding all physical registers (`CONFIG`, `EN_AA`, `RF_CH`, `RF_SETUP`, `STATUS`, `OBSERVE_TX`, `RPD`, `FIFO_STATUS`, etc.).
+  - 126-channel RPD carrier energy sweep across 2.400 GHz – 2.525 GHz.
+  - 100-packet link benchmark reporting packet loss, latency, and throughput.
+- **Configuration Profile Engine (`profile`):**
+  - 8 operational profile presets: `Combined`, `WiFi-Research`, `BLE-Research`, `NRF24-Lab`, `IR-Lab`, `USB-Lab`, `Diagnostics`, `Custom`.
+  - Dynamic peripheral power isolation shutting down unused transceivers to prevent brownouts.
+- **Automated Firmware Self-Test Suite (`selftest`):**
+  - Diagnostic validator covering internal SRAM, 1 MB Octal PSRAM test pattern, I2C bus scan, SPI2 NRF24, SPI3 Display, UART1 loopback, Native USB CDC, and WS2812B NeoPixel.
+- **Cyberpunk UI & Easter Eggs (`ghost`):**
+  - Digital rain Matrix animation (`ghost matrix`), ASCII Ghost Radar (`ghost radar`), Ghost Companion mascot (`ghost companion`), and milestone achievements.
+- **Laptop Command Center (`desktop/`):**
+  - Standalone multi-tab Python/Tkinter desktop workstation (`desktop/app.py`).
+  - Threaded serial transceiver (`desktop/serial_comm.py`) with automatic ESP32-S3 COM port discovery.
+  - SQLite session logger (`desktop/database.py`) with CSV/JSON exports.
+  - Host-side SDR abstraction layer (`desktop/modules/sdr_abstraction.py`) for RTL-SDR and HackRF correlation.
+- **God Mode V3 Architecture Documentation Suite:**
+  - `FEATURE_GAP_ANALYSIS.md`, `MODULE_SPECIFICATION.md`, `RESOURCE_REGISTRY.md`, `SECURITY_POLICY.md`, `FLASHING_GUIDE.md`, `LAPTOP_COMMAND_CENTER.md`, `RELEASE_NOTES.md`.
+
+
 ## v2.3.0 – GhostESP God Mode V2 Master Re-Engineering Release
 
 ### Added

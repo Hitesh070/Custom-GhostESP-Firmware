@@ -622,6 +622,22 @@ void register_commands() {
     register_command("apps", handle_apps_cmd);
     register_command("subghz", handle_subghz_cmd);
 
+    /* GhostESP God Mode V3 Advanced Subsystem Commands */
+    extern void handle_rogue_cmd(int argc, char **argv);
+    extern void handle_deauthmon_cmd(int argc, char **argv);
+    extern void handle_nrf24lab_cmd(int argc, char **argv);
+    extern void handle_profile_cmd(int argc, char **argv);
+    extern void handle_selftest_cmd(int argc, char **argv);
+    extern void handle_ghost_cmd(int argc, char **argv);
+
+    register_command("roguedetect", handle_rogue_cmd);
+    register_command("eviltwindetect", handle_rogue_cmd);
+    register_command("deauthmon", handle_deauthmon_cmd);
+    register_command("nrf24lab", handle_nrf24lab_cmd);
+    register_command("profile", handle_profile_cmd);
+    register_command("selftest", handle_selftest_cmd);
+    register_command("ghost", handle_ghost_cmd);
+
     cmd_comm_register_callback();
 
     glog("Registered Commands\n");

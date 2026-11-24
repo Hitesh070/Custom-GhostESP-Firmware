@@ -17,6 +17,19 @@
 
 ## What's New
 
+**v3.0 (God Mode V3):** Master Wireless Security Research & Ecosystem Release for the 7Semi ESP32-S3-WROOM-1-N16R8.
+
+- **Multi-Vector Rogue AP & Evil Twin Detection:** Real-time correlation of duplicate SSIDs across varying BSSIDs, OUI vendor validation, authentication downgrade detection, and RSSI delta warnings (`roguedetect`).
+- **Passive Deauthentication & Disassociation Monitor:** Sliding-window frame rate monitor tracking 802.11 deauth bursts (>= 5 fps) with MAC attribution and IEEE 802.11 reason code decoding (`deauthmon`).
+- **NRF24 RF Lab & Spectrum Sweep:** Full 24-register bitfield inspector, 126-channel RPD carrier energy sweep (2.400–2.525 GHz), and 100-packet link benchmark (`nrf24lab`).
+- **Configuration Profile Engine:** 8 operational profiles (`Combined`, `WiFi-Research`, `BLE-Research`, `NRF24-Lab`, `IR-Lab`, `USB-Lab`, `Diagnostics`, `Custom`) with dynamic radio and peripheral power isolation (`profile`).
+- **Automated Firmware Self-Test Suite:** End-to-end hardware validation for internal SRAM, Octal PSRAM, I2C0, SPI2 NRF24, SPI3 Display, UART1, Native USB CDC, and WS2812B NeoPixel (`selftest`).
+- **Cyberpunk UI & Easter Eggs:** Matrix digital rain (`ghost matrix`), ASCII Ghost Radar (`ghost radar`), interactive Ghost Companion mascot (`ghost companion`), and milestone achievements (`ghost`).
+- **Laptop Command Center (`desktop/`):** Dedicated Python/Tkinter cyberpunk GUI workstation with threaded serial transceiver, SQLite threat logging, and host-side SDR abstraction layer for RTL-SDR and HackRF.
+- **Hardware Architecture Authority:** Canonical pin registry with locked Octal PSRAM (GPIO 33–38) and Native USB (GPIO 19–20), plus isolated dual-SPI buses (`SPI2_HOST` NRF24, `SPI3_HOST` ST7735S Display).
+
+---
+
 **v2.2:** LoRa goes dual-stack, captures get richer, and detection widens.
 
 - **LoRa:** Meshtastic and MeshCore on SX1262, switchable at runtime, with the official apps over BLE. Ships on Heltec V3, T-Deck, CrowPanel Advance 2.4/2.8/4.3", and CrowPanel Advanced P4 7/9/10.1".

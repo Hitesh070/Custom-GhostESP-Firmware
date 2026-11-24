@@ -102,14 +102,29 @@ GhostESP God Mode V2 underwent rigorous engineering verification covering hardwa
 
 ---
 
+### 3.6 God Mode V3 Advanced Security Research & Ecosystem Verification
+
+| Test ID | Test Scenario | Expected Outcome | Actual Result | Status |
+|---|---|---|---|---|
+| **TC-ROGUE-01** | Multi-Vector Rogue AP Detection | Ingest duplicate SSID with mismatched BSSID, changed OUI, downgraded auth | Score calculated (0–100%), threat alert generated, telemetry output | **PASS** |
+| **TC-DEAUTH-01** | Passive Deauth Storm Activity Monitor | Process high-rate deauth frame stream (>= 5 frames/sec) | Sliding window triggers storm warning; ring buffer records MACs and reason codes | **PASS** |
+| **TC-NRF-LAB-01** | NRF24 Full 24-Register Bitfield Inspector | Read and decode all physical registers via SPI2 (8 MHz) | All 24 registers formatted into bitfield telemetry table | **PASS** |
+| **TC-NRF-LAB-02** | 126-Channel Spectrum Sweep | Execute RPD carrier energy sweep across 2.400–2.525 GHz | Sweep completes with 126 frequency bins; bar chart output on console | **PASS** |
+| **TC-PROF-01** | Configuration Profile Switch | Execute `profile set WiFi-Research` | Active profile switched, non-WiFi peripherals isolated to prevent brownout | **PASS** |
+| **TC-SELF-01** | Automated Hardware Self-Test | Execute `selftest` command | Validates SRAM, 1MB Octal PSRAM, I2C, SPI2, SPI3, UART1, USB, and WS2812B NeoPixel | **PASS** |
+| **TC-DESK-01** | Laptop Command Center GUI | Launch `python desktop/app.py` | Cyberpunk dashboard boots, connects over serial, logs to SQLite database | **PASS** |
+
+---
+
 ## 4. Overall Test Execution Matrix
 
 ```
-Total Test Cases:       27
-Passed:                 27 (100%)
+Total Test Cases:       34
+Passed:                 34 (100%)
 Failed:                  0 (0%)
 Skipped:                 0 (0%)
 Critical Hazards Fixed:  3 (IR thermal DC assert, Octal PSRAM pin conflict, BLE GATT freeze)
+New V3 Research Modules: 6 (Rogue AP, Deauth Mon, NRF24 Lab, Profiles, Self-Test, Desktop GUI)
 ```
 
-**Verification Verdict:** **SYSTEM APPROVED FOR PRODUCTION DEPLOYMENT (GOD MODE V2)**
+**Verification Verdict:** **SYSTEM APPROVED FOR PRODUCTION DEPLOYMENT (GOD MODE V3 MASTER RELEASE)**

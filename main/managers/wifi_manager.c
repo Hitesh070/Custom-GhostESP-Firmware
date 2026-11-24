@@ -1,6 +1,7 @@
 // wifi_manager.c
 
 #include "managers/wifi_manager.h"
+#include "modules/rogue_detector.h"
 #include "managers/ghostscript_runtime.h"
 #include "scans/wifi/hop_profile.h"
 #include "scans/wifi/port_scan.h"
@@ -3870,6 +3871,7 @@ static void live_ap_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
             bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5],
             rec->primary, rec->rssi);
         ghostscript_emit_event("wifi_ap_found", ap_payload);
+        rogue_detector_process_ap(bssid, sanitized, rec->primary, rec->rssi, rec->authmode);
     }
 
     uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);

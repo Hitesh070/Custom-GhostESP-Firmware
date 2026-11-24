@@ -1,4 +1,5 @@
 #include "core/callbacks.h"
+#include "modules/deauth_monitor.h"
 #include "core/pcap_pool.h"
 #include "scans/wifi/wardrive_observation.h"
 #include "core/system_manager.h"
@@ -3676,6 +3677,7 @@ void wifi_probe_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
     if (!is_packet_valid(pkt, type)) return;
     
     if (pkt->rx_ctrl.sig_len > 0) {
+        deauth_monitor_process_frame(pkt->payload, pkt->rx_ctrl.sig_len, pkt->rx_ctrl.rssi);
         enqueue_pcap_write_meta(pkt->payload, pkt->rx_ctrl.sig_len, &pkt->rx_ctrl);
     }
 }
@@ -3694,6 +3696,7 @@ void wifi_beacon_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
     if (frame_subtype != WIFI_PKT_BEACON) return;
     
     if (pkt->rx_ctrl.sig_len > 0) {
+        deauth_monitor_process_frame(pkt->payload, pkt->rx_ctrl.sig_len, pkt->rx_ctrl.rssi);
         enqueue_pcap_write_meta(pkt->payload, pkt->rx_ctrl.sig_len, &pkt->rx_ctrl);
     }
 }
@@ -3712,6 +3715,7 @@ void wifi_deauth_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
     if (frame_subtype != WIFI_PKT_DEAUTH && frame_subtype != 0x0A) return; // 0x0A = disassoc
     
     if (pkt->rx_ctrl.sig_len > 0) {
+        deauth_monitor_process_frame(pkt->payload, pkt->rx_ctrl.sig_len, pkt->rx_ctrl.rssi);
         enqueue_pcap_write_meta(pkt->payload, pkt->rx_ctrl.sig_len, &pkt->rx_ctrl);
     }
 }
@@ -3722,6 +3726,7 @@ void wifi_pwn_scan_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
     wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
     if (!is_packet_valid(pkt, type)) return;
     if (pkt->rx_ctrl.sig_len > 0) {
+        deauth_monitor_process_frame(pkt->payload, pkt->rx_ctrl.sig_len, pkt->rx_ctrl.rssi);
         enqueue_pcap_write_meta(pkt->payload, pkt->rx_ctrl.sig_len, &pkt->rx_ctrl);
     }
 }

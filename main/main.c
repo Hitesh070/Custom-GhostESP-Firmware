@@ -10,6 +10,10 @@
 #include "core/system_manager.h"
 #include "core/ghostesp_version.h"
 #include "hardware/board_config.h"
+#include "modules/rogue_detector.h"
+#include "modules/deauth_monitor.h"
+#include "modules/profile_manager.h"
+#include "modules/ghost_eastereggs.h"
 #include "core/memory_debug.h"
 #include "managers/ap_manager.h"
 #include "managers/display_manager.h"
@@ -728,6 +732,10 @@ void app_main(void) {
     /* 7Semi ESP32-S3 Hardware Authority & Central Pin Allocation Registry */
     board_init();
     board_dump_pinout_table();
+    rogue_detector_init();
+    deauth_monitor_init();
+    profile_manager_init();
+    ghost_eastereggs_init();
     MEASURE_INIT_RAM("Ghostchi Mood init", ghostchi_mood_init());
     ghostchi_mood_record_event(GHOSTCHI_MOOD_EVENT_BOOT, 3);
 
