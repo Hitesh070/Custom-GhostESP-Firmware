@@ -1,43 +1,21 @@
-# GhostESP God Mode V3 – Laptop Command Center
+# GhostESP Command Center V5 — Desktop Suite
 
-The **GhostESP Laptop Command Center** is a dedicated desktop operations suite and companion application for the GhostESP firmware on the **7Semi ESP32-S3-WROOM-1-N16R8**.
+The **GhostESP Command Center** is a PySide6 + Matplotlib + SQLite WAL desktop engineering suite for the **7Semi ESP32-S3-WROOM-1-N16R8** GhostESP firmware.
 
----
-
-## 1. Architecture & Design Principles
-
-- **Host-Side Processing:** All intensive visualization, database persistence, and wideband SDR spectral digitizing are kept on the host laptop, leaving the ESP32-S3 microcontroller unburdened.
-- **Bi-Directional Telemetry:** Operates over the ESP32-S3 native USB serial port (`115200` baud default).
-- **Persistent SQLite Storage:** Automatically logs AP discoveries, rogue AP events, and deauth storms into `ghostesp_sessions.db`.
-- **Export Capabilities:** One-click export to standard CSV and JSON.
-
----
-
-## 2. Quick Start
-
-### Prerequisites
-- Python 3.10+
-- `pyserial` (installed in Python environment)
-
-### Install Dependencies:
-```bash
-cd desktop
-pip install -r requirements.txt
+## Quick Start
+```powershell
+pip install -r desktop/requirements.txt
+python desktop/app.py
 ```
 
-### Launch the Application:
-```bash
-python app.py
+## Automated Tests
+```powershell
+pytest -v desktop/tests/
 ```
 
----
-
-## 3. Operations & Tabs
-
-1. **Dashboard:** Live hardware status, memory meters, and fast command dispatch buttons.
-2. **Wi-Fi Lab:** Real-time AP table, channel occupancy, and Rogue AP / Evil Twin alert monitoring.
-3. **BLE Lab:** BLE peripheral node tracking.
-4. **NRF24 RF:** Direct SPI2 register inspector, 126-channel spectrum activity histogram, and link benchmark.
-5. **Timeline:** Cross-subsystem unified event stream.
-6. **SDR Interface:** Extensible abstraction layer for host-attached SDRs (RTL-SDR v4, HackRF One).
-7. **Console:** Interactive bidirectional terminal for CLI commands.
+## Architecture
+- `app.py` — 17-view PySide6 GUI, Matplotlib live thermal & NRF24 spectrum charts, command-context routing, CSV/JSON export.
+- `parsers.py` — Stateful ANSI-safe serial telemetry parser (`[TEMP_JSON]`, `scanap`/`list -a`, `bledetect`/`blescan -t`, `roguedetect`, `deauthmon`, `selftest`, `profile list`, `nrf24lab sweep`).
+- `serial_comm.py` — Thread-safe `GhostSerialTransceiver` with queued TX, prompt-flush RX, and honest `GhostSDRInterface` host check.
+- `database.py` — Thread-safe 7-table SQLite WAL store (`ghost_telemetry.db`).
+- `theme.py` — Dark engineering palette & Qt stylesheet.

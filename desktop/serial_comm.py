@@ -193,6 +193,11 @@ class GhostSerialTransceiver:
                 line = line_bytes.decode("utf-8", errors="replace")
                 if self.on_line:
                     self.on_line(line)
+            if buffer.endswith((b"ghost> ", b"ghost > ")):
+                line = buffer.decode("utf-8", errors="replace")
+                buffer = b""
+                if self.on_line:
+                    self.on_line(line)
 
 
 class GhostSDRInterface:

@@ -165,7 +165,7 @@ class GhostTelemetryParser:
             if m_sweep:
                 events.append(ParsedEvent("nrf24_sweep_bin", {
                     "channel": int(m_sweep.group(1)),
-                    "freq_mhz": 2000 + int(m_sweep.group(2)),
+                    "freq_mhz": round(float(f"2.{m_sweep.group(2)}") * 1000),
                     "activity_pct": int(m_sweep.group(3)),
                 }))
                 return events

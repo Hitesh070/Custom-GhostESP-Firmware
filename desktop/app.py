@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import sys
 import time
 from collections import deque
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from PySide6.QtCore import QObject, Qt, QStringListModel, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, QStringListModel, QTimer, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QApplication,
     QCheckBox,
     QComboBox,
@@ -158,6 +160,7 @@ class GhostCommandCenterWindow(QMainWindow):
         self.temp_points: deque = deque(maxlen=120)
         self.sweep_bins: Dict[int, int] = {}
         self.cmd_history: List[str] = []
+        self._history_idx: int = -1
         self.nav_buttons: List[QPushButton] = []
         self._last_cmd: str = ""
 
@@ -165,6 +168,8 @@ class GhostCommandCenterWindow(QMainWindow):
         self.temp_poll_timer.timeout.connect(self._poll_temperature)
 
         self._build_ui()
+        for tbl in self.findChildren(QTableWidget):
+            tbl.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._refresh_ports()
         self._load_persisted_snapshot()
 
@@ -348,7 +353,7 @@ class GhostCommandCenterWindow(QMainWindow):
             b = QPushButton(label)
             if cmd == "__dtr_low":
                 b.setToolTip("Deasserts DTR/RTS lines (triggers USB_UART_CHIP_RESET on ESP32-S3)")
-                b.clicked.connect(lambda: self.serial.set_control_lines(False, False))
+                b.clicked.connect(self._hardware_reset_dtr_rts)
             else:
                 b.clicked.connect(lambda _=False, c=cmd: self._send_cmd(c))
             btns.addWidget(b)
@@ -424,6 +429,7 @@ class GhostCommandCenterWindow(QMainWindow):
         self.temp_poll_spin.setRange(500, 60000)
         self.temp_poll_spin.setValue(2000)
         self.temp_poll_spin.setSuffix(" ms")
+        self.temp_poll_spin.valueChanged.connect(self._on_temp_interval_changed)
         row.addWidget(self.auto_temp_chk)
         row.addWidget(self.temp_poll_spin)
         ctl_lay.addLayout(row)
@@ -787,12 +793,16 @@ class GhostCommandCenterWindow(QMainWindow):
         completer.setModel(QStringListModel(COMMON_COMMANDS))
         completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
         self.console_in.setCompleter(completer)
+        self.console_in.installEventFilter(self)
         self.console_in.returnPressed.connect(self._send_console_input)
         in_row.addWidget(self.console_in, 1)
         btn = QPushButton("SEND")
         btn.setObjectName("PrimaryBtn")
         btn.clicked.connect(self._send_console_input)
         in_row.addWidget(btn)
+        btn_clr = QPushButton("Clear")
+        btn_clr.clicked.connect(self.console_out.clear)
+        in_row.addWidget(btn_clr)
         cl.addLayout(in_row)
         lay.addWidget(card)
         return w
@@ -864,6 +874,11 @@ class GhostCommandCenterWindow(QMainWindow):
             self.btn_connect.setObjectName("PrimaryBtn")
             self.conn_badge.setText("OFFLINE")
             self.conn_badge.setObjectName("BadgeOffline")
+            self.kpi_temp.setText("--.- C")
+            self.kpi_sram.setText("-- KB")
+            self.kpi_psram.setText("-- MB")
+            self.temp_now_lbl.setText("--.- C (OFFLINE)")
+            self.sec_summary.setText("Rogue Detector: IDLE (OFFLINE) | Deauth Monitor: IDLE (OFFLINE)")
             self.db.end_session(self.session_id)
             self.session_id = None
             self.db.log_event("SYSTEM", "DISCONNECT", "INFO", message)
@@ -877,10 +892,47 @@ class GhostCommandCenterWindow(QMainWindow):
         if not self.serial.running:
             QMessageBox.information(self, "Offline", f"Connect to ESP32-S3 before sending `{cmd}`.")
             return
-        self._last_cmd = cmd.strip().split()[0].lower()
+        base = cmd.strip().split()[0].lower()
+        if base == "selftest":
+            self.selftest_table.setRowCount(0)
+        self._last_cmd = base
         self.serial.send_command(cmd)
         self.console_out.appendPlainText(f"> {cmd}")
         self.cmd_history.append(cmd)
+        self._history_idx = -1
+
+    def eventFilter(self, obj, event):
+        if obj is self.console_in and event.type() == QEvent.Type.KeyPress:
+            key = event.key()
+            if key == Qt.Key.Key_Up and self.cmd_history:
+                if self._history_idx == -1:
+                    self._history_idx = len(self.cmd_history) - 1
+                elif self._history_idx > 0:
+                    self._history_idx -= 1
+                self.console_in.setText(self.cmd_history[self._history_idx])
+                return True
+            if key == Qt.Key.Key_Down and self.cmd_history:
+                if self._history_idx == -1:
+                    return True
+                if self._history_idx < len(self.cmd_history) - 1:
+                    self._history_idx += 1
+                    self.console_in.setText(self.cmd_history[self._history_idx])
+                else:
+                    self._history_idx = -1
+                    self.console_in.clear()
+                return True
+        return super().eventFilter(obj, event)
+
+    def _hardware_reset_dtr_rts(self) -> None:
+        if not self.serial.running:
+            QMessageBox.information(self, "Offline", "Connect to ESP32-S3 before toggling DTR/RTS.")
+            return
+        ok = self.serial.set_control_lines(False, False)
+        self.status_bar.showMessage("DTR/RTS set LOW (hardware reset signal sent)." if ok else "Failed to set DTR/RTS.")
+
+    def _on_temp_interval_changed(self, ms: int) -> None:
+        if self.auto_temp_chk.isChecked():
+            self.temp_poll_timer.start(ms)
 
     def _apply_profile(self, pid: int) -> None:
         self._send_cmd(f"profile apply {pid}")
@@ -956,26 +1008,59 @@ class GhostCommandCenterWindow(QMainWindow):
             f"{self.serial.current_port_name or 'Disconnected'} | RX: {self.serial.rx_bytes} B | TX: {self.serial.tx_bytes} B"
         )
 
+    @staticmethod
+    def _safe_float(val, default: float = 0.0) -> Optional[float]:
+        if val is None:
+            return None
+        try:
+            f = float(val)
+        except (TypeError, ValueError):
+            return None
+        return f if math.isfinite(f) else None
+
+    @staticmethod
+    def _safe_int(val, default: int = 0) -> int:
+        if val is None:
+            return default
+        try:
+            return int(val)
+        except (TypeError, ValueError):
+            return default
+
     def _dispatch_event(self, kind: str, d: dict) -> None:
         if kind == "temp_json":
-            c = float(d.get("temp_c", 0.0))
-            f = float(d.get("temp_f", 0.0))
-            sram = int(d.get("sram_free_kb", 0))
-            psram = int(d.get("psram_free_kb", 0))
+            c = self._safe_float(d.get("temp_c"))
+            f = self._safe_float(d.get("temp_f"))
+            if c is None:
+                return
+            if f is None:
+                f = (c * 9.0 / 5.0) + 32.0
+            sram = max(0, self._safe_int(d.get("sram_free_kb"), 0))
+            psram = max(0, self._safe_int(d.get("psram_free_kb"), 0))
+            min_c = self._safe_float(d.get("min_c"))
+            max_c = self._safe_float(d.get("max_c"))
+            avg_c = self._safe_float(d.get("avg_c"))
+            samples = self._safe_int(d.get("samples"), 0)
             self.kpi_temp.setText(f"{c:.1f} C")
             self.kpi_sram.setText(f"{sram} KB")
             self.kpi_psram.setText(f"{psram / 1024.0:.1f} MB")
             self.temp_now_lbl.setText(f"{c:.1f} C ({f:.1f} F)")
             self.temp_stats_lbl.setText(
-                f"Min: {d.get('min_c', 0):.1f} C | Max: {d.get('max_c', 0):.1f} C | Avg: {d.get('avg_c', 0):.1f} C | "
-                f"HW Range: {d.get('range_min', -10)}..{d.get('range_max', 80)} C | Samples: {d.get('samples', 0)}"
+                f"Min: {(min_c if min_c is not None else c):.1f} C | "
+                f"Max: {(max_c if max_c is not None else c):.1f} C | "
+                f"Avg: {(avg_c if avg_c is not None else c):.1f} C | "
+                f"HW Range: {self._safe_int(d.get('range_min'), -10)}..{self._safe_int(d.get('range_max'), 80)} C | "
+                f"Samples: {samples}"
             )
             if d.get("valid"):
                 self.temp_points.append(c)
                 self._redraw_temp_chart()
                 self.db.log_temp_sample(
-                    c, f, float(d.get("min_c", 0)), float(d.get("max_c", 0)),
-                    float(d.get("avg_c", 0)), sram, psram,
+                    c, f,
+                    min_c if min_c is not None else c,
+                    max_c if max_c is not None else c,
+                    avg_c if avg_c is not None else c,
+                    sram, psram,
                 )
         elif kind == "temp_text":
             self.kpi_temp.setText(f"{d['temp_c']:.1f} C")
@@ -1145,12 +1230,16 @@ class GhostCommandCenterWindow(QMainWindow):
     def _export_temp_csv(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, "Export Temperature Samples", "temp_samples.csv", "CSV Files (*.csv)")
         if path:
-            rows = self.db.get_temp_samples(limit=5000)
-            with open(path, "w", newline="", encoding="utf-8") as fh:
-                writer = csv.writer(fh)
-                writer.writerow(["timestamp", "temp_c", "temp_f", "min_c", "max_c", "avg_c", "sram_free_kb", "psram_free_kb"])
-                for r in rows:
-                    writer.writerow([r[k] for k in ("timestamp", "temp_c", "temp_f", "min_c", "max_c", "avg_c", "sram_free_kb", "psram_free_kb")])
+            try:
+                rows = self.db.get_temp_samples(limit=5000)
+                with open(path, "w", newline="", encoding="utf-8") as fh:
+                    writer = csv.writer(fh)
+                    writer.writerow(["timestamp", "temp_c", "temp_f", "min_c", "max_c", "avg_c", "sram_free_kb", "psram_free_kb"])
+                    for r in rows:
+                        writer.writerow([r[k] for k in ("timestamp", "temp_c", "temp_f", "min_c", "max_c", "avg_c", "sram_free_kb", "psram_free_kb")])
+                self.status_bar.showMessage(f"Exported {len(rows)} temperature samples to {path}")
+            except OSError as exc:
+                QMessageBox.critical(self, "Export Error", f"Failed to export CSV: {exc}")
 
     @staticmethod
     def _export_table_csv(tbl: QTableWidget, path: str) -> None:
@@ -1164,12 +1253,20 @@ class GhostCommandCenterWindow(QMainWindow):
     def _export_timeline_json(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, "Export Timeline", "timeline.json", "JSON Files (*.json)")
         if path:
-            self.db.export_events_json(path)
+            try:
+                cnt = self.db.export_events_json(path)
+                self.status_bar.showMessage(f"Exported {cnt} timeline events to {path}")
+            except OSError as exc:
+                QMessageBox.critical(self, "Export Error", f"Failed to export JSON: {exc}")
 
     def _export_bundle_json(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, "Export Session Bundle", "ghostesp_bundle.json", "JSON Files (*.json)")
         if path:
-            self.db.export_session_bundle(path)
+            try:
+                self.db.export_session_bundle(path)
+                self.status_bar.showMessage(f"Exported full session bundle to {path}")
+            except OSError as exc:
+                QMessageBox.critical(self, "Export Error", f"Failed to export bundle: {exc}")
 
     def closeEvent(self, event) -> None:
         self.temp_poll_timer.stop()

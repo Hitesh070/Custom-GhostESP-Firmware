@@ -58,12 +58,8 @@ class SDRManager:
         self.active_driver = NullSDRDriver()
 
     def detect_connected_devices(self):
-        # Placeholder for pyrtlsdr / hackrf C-library binding inspection
-        return [{
-            "id": "sdr_sim_0",
-            "name": "Host SDR Receiver Interface (Ready)",
-            "supported": True
-        }]
+        # Honest fallback: returns empty list unless external pyrtlsdr/hackrf hardware is attached
+        return []
 
     def get_info(self):
         return self.active_driver.get_device_info()
