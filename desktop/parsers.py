@@ -4,11 +4,119 @@ from __future__ import annotations
 
 import json
 import re
+import struct
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
 MAC_RE = re.compile(r"\b([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){5})\b")
+
+MIRROR_MAGIC_BYTES = struct.pack("<I", 0x47455350)  # b"PSEG"
+MIRROR_END_BYTES = struct.pack("<I", 0x444E4547)    # b"GEND"
+MIRROR_HDR_FMT = "<IBHHHHI"
+MIRROR_HDR_SIZE = struct.calcsize(MIRROR_HDR_FMT)   # 17 bytes
+
+
+def extract_mirror_packets(buf: bytearray) -> List[Tuple[int, int, int, int, int, bytes]]:
+    """Extract binary GhostESP ScreenMirror packets from a serial RX buffer in-place."""
+    packets: List[Tuple[int, int, int, int, int, bytes]] = []
+    while True:
+        idx = buf.find(MIRROR_MAGIC_BYTES)
+        if idx == -1:
+            break
+        if len(buf) - idx < MIRROR_HDR_SIZE:
+            break
+        _marker, cmd, x1, y1, x2, y2, data_len = struct.unpack_from(MIRROR_HDR_FMT, buf, idx)
+        if cmd < 1 or cmd > 6 or data_len > 256000:
+            # False sync; skip magic byte and continue scanning
+            del buf[idx : idx + 1]
+            continue
+        extra = 0 if cmd == 1 else (6 if cmd in (2, 3) else 4)  # [2B cs] + 4B GEND
+        total_len = MIRROR_HDR_SIZE + data_len + extra
+        if len(buf) - idx < total_len:
+            break
+        payload_start = idx + MIRROR_HDR_SIZE
+        payload = bytes(buf[payload_start : payload_start + data_len])
+        del buf[idx : idx + total_len]
+        packets.append((cmd, x1, y1, x2, y2, payload))
+    return packets
+
+
+def decode_mirror_pixels(cmd: int, w: int, h: int, payload: bytes, swap_bytes: bool = False) -> bytes:
+    """Decode GhostESP ScreenMirror payload (cmd 0x02..0x06) into tightly packed RGB888 bytes."""
+    n = w * h
+    out = bytearray(n * 3)
+    if n <= 0:
+        return bytes(out)
+
+    if cmd == 0x04:  # 8-bit RGB332
+        for i in range(min(n, len(payload))):
+            v = payload[i]
+            out[i * 3] = ((v >> 5) & 0x07) * 255 // 7
+            out[i * 3 + 1] = ((v >> 2) & 0x07) * 255 // 7
+            out[i * 3 + 2] = (v & 0x03) * 255 // 3
+    elif cmd == 0x05:  # 8-bit RGB332 RLE
+        px = 0
+        p = 0
+        while p + 1 < len(payload) and px < n:
+            cnt = payload[p]
+            v = payload[p + 1]
+            p += 2
+            r = ((v >> 5) & 0x07) * 255 // 7
+            g = ((v >> 2) & 0x07) * 255 // 7
+            b = (v & 0x03) * 255 // 3
+            for _ in range(cnt):
+                if px >= n:
+                    break
+                out[px * 3 : px * 3 + 3] = bytes((r, g, b))
+                px += 1
+    elif cmd == 0x06:  # 12-bit packed RGB444 (2 px -> 3 bytes)
+        px = 0
+        p = 0
+        while p < len(payload) and px < n:
+            if p + 2 < len(payload) and px + 1 < n:
+                b0, b1, b2 = payload[p], payload[p + 1], payload[p + 2]
+                p += 3
+                p0 = (b0 << 4) | (b1 >> 4)
+                p1 = ((b1 & 0x0F) << 8) | b2
+                for val in (p0, p1):
+                    out[px * 3] = ((val >> 8) & 0x0F) * 17
+                    out[px * 3 + 1] = ((val >> 4) & 0x0F) * 17
+                    out[px * 3 + 2] = (val & 0x0F) * 17
+                    px += 1
+            elif p + 1 < len(payload):
+                p0 = (payload[p] << 4) | (payload[p + 1] >> 4)
+                p += 2
+                out[px * 3] = ((p0 >> 8) & 0x0F) * 17
+                out[px * 3 + 1] = ((p0 >> 4) & 0x0F) * 17
+                out[px * 3 + 2] = (p0 & 0x0F) * 17
+                px += 1
+            else:
+                break
+    elif cmd == 0x02:  # 16-bit RGB565 raw
+        for i in range(min(n, len(payload) // 2)):
+            b0, b1 = payload[i * 2], payload[i * 2 + 1]
+            val = ((b0 << 8) | b1) if swap_bytes else ((b1 << 8) | b0)
+            out[i * 3] = ((val >> 11) & 0x1F) * 255 // 31
+            out[i * 3 + 1] = ((val >> 5) & 0x3F) * 255 // 63
+            out[i * 3 + 2] = (val & 0x1F) * 255 // 31
+    elif cmd == 0x03:  # 16-bit RGB565 RLE (big-endian val in screen_mirror.c)
+        px = 0
+        p = 0
+        while p + 2 < len(payload) and px < n:
+            cnt = payload[p]
+            b0, b1 = payload[p + 1], payload[p + 2]
+            p += 3
+            val = ((b1 << 8) | b0) if swap_bytes else ((b0 << 8) | b1)
+            r = ((val >> 11) & 0x1F) * 255 // 31
+            g = ((val >> 5) & 0x3F) * 255 // 63
+            b = (val & 0x1F) * 255 // 31
+            for _ in range(cnt):
+                if px >= n:
+                    break
+                out[px * 3 : px * 3 + 3] = bytes((r, g, b))
+                px += 1
+    return bytes(out)
 
 
 def strip_ansi(text: str) -> str:

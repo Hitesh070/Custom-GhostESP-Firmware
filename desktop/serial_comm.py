@@ -19,6 +19,7 @@ class GhostSerialTransceiver:
         self,
         on_line_callback: Optional[Callable[[str], None]] = None,
         on_status_callback: Optional[Callable[[bool, str], None]] = None,
+        on_mirror_callback: Optional[Callable[[int, int, int, int, int, bytes], None]] = None,
     ) -> None:
         self.ser: Optional[serial.Serial] = None
         self.running = False
@@ -29,6 +30,7 @@ class GhostSerialTransceiver:
         self._tx_queue: "queue.Queue[Optional[str]]" = queue.Queue()
         self.on_line = on_line_callback
         self.on_status = on_status_callback
+        self.on_mirror = on_mirror_callback
         self.current_port_name: Optional[str] = None
         self.current_baudrate: int = 115200
         self.rx_bytes = 0
@@ -168,7 +170,8 @@ class GhostSerialTransceiver:
                         break
 
     def _read_loop(self) -> None:
-        buffer = b""
+        from parsers import extract_mirror_packets
+        buffer = bytearray()
         while self.running:
             chunk = b""
             with self._io_lock:
@@ -187,17 +190,26 @@ class GhostSerialTransceiver:
             if not chunk:
                 continue
             self.rx_bytes += len(chunk)
-            buffer += chunk.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
-            while b"\n" in buffer:
-                line_bytes, buffer = buffer.split(b"\n", 1)
-                line = line_bytes.decode("utf-8", errors="replace")
-                if self.on_line:
-                    self.on_line(line)
-            if buffer.endswith((b"ghost> ", b"ghost > ")):
-                line = buffer.decode("utf-8", errors="replace")
-                buffer = b""
-                if self.on_line:
-                    self.on_line(line)
+            buffer.extend(chunk)
+            if self.on_mirror:
+                for pkt in extract_mirror_packets(buffer):
+                    self.on_mirror(*pkt)
+            # Only split text lines when not mid-binary mirror packet
+            if b"PSEG" not in buffer:
+                text_buf = bytes(buffer).replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+                buffer = bytearray(text_buf)
+                while b"\n" in buffer:
+                    nl_idx = buffer.find(b"\n")
+                    line_bytes = bytes(buffer[:nl_idx])
+                    del buffer[: nl_idx + 1]
+                    line = line_bytes.decode("utf-8", errors="replace")
+                    if self.on_line:
+                        self.on_line(line)
+                if bytes(buffer).endswith((b"ghost> ", b"ghost > ")):
+                    line = bytes(buffer).decode("utf-8", errors="replace")
+                    buffer.clear()
+                    if self.on_line:
+                        self.on_line(line)
 
 
 class GhostSDRInterface:

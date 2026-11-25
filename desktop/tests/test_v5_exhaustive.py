@@ -16,7 +16,7 @@ if str(DESKTOP_DIR) not in sys.path:
 
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QMessageBox, QPushButton, QTableWidget
+from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox, QPushButton, QTableWidget
 
 from app import GhostCommandCenterWindow
 from database import GhostDatabase
@@ -42,8 +42,8 @@ def _make_window(tmp_path, monkeypatch):
 def test_navigation_all_17_views(tmp_path, monkeypatch, qapp):
     win, _ = _make_window(tmp_path, monkeypatch)
     try:
-        assert win.stack.count() == 17
-        assert len(win.nav_buttons) == 17
+        assert win.stack.count() == 18
+        assert len(win.nav_buttons) == 18
         for i, btn in enumerate(win.nav_buttons):
             btn.click()
             assert win.stack.currentIndex() == i
@@ -58,13 +58,14 @@ def test_every_command_button_connected_and_offline_safe(tmp_path, monkeypatch, 
     warnings: list[str] = []
     monkeypatch.setattr(QMessageBox, "information", lambda *a: warnings.append(str(a[2])))
     monkeypatch.setattr(QMessageBox, "warning", lambda *a: warnings.append(str(a[2])))
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **kw: ("", ""))
     try:
-        # Click all action buttons on every page while connected (skipping export file dialogs)
+        # Click all action buttons on every page while connected (skipping export/screenshot file dialogs)
         all_buttons = win.findChildren(QPushButton)
         assert len(all_buttons) >= 60
         for btn in all_buttons:
             txt = btn.text()
-            if btn in win.nav_buttons or txt in ("CONNECT", "DISCONNECT", "Refresh") or "Export" in txt:
+            if btn in win.nav_buttons or txt in ("CONNECT", "DISCONNECT", "Refresh", "Screenshot") or "Export" in txt:
                 continue
             btn.click()
         # Verify representative commands were queued
@@ -201,3 +202,32 @@ def test_honest_sdr_and_requirements_sync():
     assert "matplotlib" in reqs
     assert "pyside6" in reqs
     assert "pyserial" in reqs
+
+
+def test_screen_mirror_binary_decode_and_controls(tmp_path, monkeypatch, qapp):
+    import struct
+    from parsers import MIRROR_END_BYTES, MIRROR_HDR_FMT, MIRROR_MAGIC_BYTES, extract_mirror_packets
+
+    # Pack INFO (240x320) + 2x1 RGB444 (cmd=0x06) packet
+    info_hdr = struct.pack(MIRROR_HDR_FMT, 0x47455350, 0x01, 240, 320, 16, 0, 0)
+    # Two pixels: white (0xFFF) and red (0xF00) -> 3 bytes: 0xFF, 0xFF, 0x00
+    px_payload = bytes([0xFF, 0xFF, 0x00])
+    frame_hdr = struct.pack(MIRROR_HDR_FMT, 0x47455350, 0x06, 0, 0, 1, 0, len(px_payload))
+    buf = bytearray(info_hdr + frame_hdr + px_payload + MIRROR_END_BYTES)
+    pkts = extract_mirror_packets(buf)
+    assert len(pkts) == 2
+    assert len(buf) == 0
+
+    win, sent = _make_window(tmp_path, monkeypatch)
+    try:
+        for pkt in pkts:
+            win._on_mirror_packet_ui(*pkt)
+        assert win.mirror_w == 240
+        assert win.mirror_h == 320
+        assert win.mirror_frames == 1
+        assert win.mirror_img.pixelColor(0, 0).red() == 255
+        assert win.mirror_img.pixelColor(1, 0).red() == 255
+        assert win.mirror_img.pixelColor(1, 0).green() == 0
+    finally:
+        win.close()
+        qapp.processEvents()

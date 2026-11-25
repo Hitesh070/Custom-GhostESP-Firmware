@@ -147,7 +147,7 @@ def test_pyside6_window_offscreen_smoke(tmp_path, monkeypatch):
     qapp = QApplication.instance() or QApplication([])
     win = GhostCommandCenterWindow(db_path=str(tmp_path / "ui_test.db"))
     try:
-        assert win.stack.count() == 17
+        assert win.stack.count() == 18
         win._on_serial_line_ui(
             '[TEMP_JSON] {"sensor":"ESP32 CHIP INTERNAL TEMPERATURE","init":true,"valid":true,'
             '"temp_c":49.2,"temp_f":120.6,"min_c":45.0,"max_c":50.1,"avg_c":47.5,'

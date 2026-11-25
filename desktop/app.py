@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from PySide6.QtCore import QEvent, QObject, Qt, QStringListModel, QTimer, Signal
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QColor, QFont, QImage, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QStackedWidget,
     QStatusBar,
@@ -44,7 +45,7 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
 from database import GhostDatabase
-from parsers import GhostTelemetryParser
+from parsers import GhostTelemetryParser, decode_mirror_pixels
 from serial_comm import GhostSDRInterface, GhostSerialTransceiver
 from theme import APP_STYLESHEET, PALETTE
 
@@ -80,6 +81,7 @@ class SerialSignals(QObject):
     """Thread-safe Qt signal bridge from serial background threads to UI."""
     line_received = Signal(str)
     status_changed = Signal(bool, str)
+    mirror_packet = Signal(int, int, int, int, int, bytes)
 
 
 class MplChartWidget(QWidget):
@@ -89,6 +91,8 @@ class MplChartWidget(QWidget):
         super().__init__(parent)
         self.figure = Figure(figsize=(6, 2.8), dpi=100, facecolor=PALETTE["bg_surface"])
         self.canvas = FigureCanvas(self.figure)
+        self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.ax = self.figure.add_subplot(111)
         self.title = title
         self._style_axes()
@@ -103,6 +107,7 @@ class MplChartWidget(QWidget):
         for spine in self.ax.spines.values():
             spine.set_color(PALETTE["border_subtle"])
         self.ax.grid(True, color=PALETTE["border_subtle"], linestyle="--", linewidth=0.5, alpha=0.7)
+        self.figure.subplots_adjust(left=0.06, right=0.985, top=0.91, bottom=0.10)
 
 
 def make_card(title: str) -> tuple[QFrame, QVBoxLayout]:
@@ -148,10 +153,12 @@ class GhostCommandCenterWindow(QMainWindow):
         self.signals = SerialSignals()
         self.signals.line_received.connect(self._on_serial_line_ui)
         self.signals.status_changed.connect(self._on_status_changed_ui)
+        self.signals.mirror_packet.connect(self._on_mirror_packet_ui)
 
         self.serial = GhostSerialTransceiver(
             on_line_callback=self.signals.line_received.emit,
             on_status_callback=self.signals.status_changed.emit,
+            on_mirror_callback=self.signals.mirror_packet.emit,
         )
 
         self.session_id: Optional[int] = None
@@ -247,12 +254,13 @@ class GhostCommandCenterWindow(QMainWindow):
         body.addWidget(self.stack, 1)
         root_layout.addLayout(body, 1)
 
-        # Build all 17 views cleanly
+        # Build all 18 views cleanly
         views = [
             ("Dashboard", self._view_dashboard()),
             ("Device & Serial", self._view_serial()),
             ("Hardware Pinout", self._view_hardware()),
             ("Temperature Monitor", self._view_temperature()),
+            ("Screen Mirror", self._view_screen_mirror()),
             ("Wi-Fi Discovery", self._view_wifi()),
             ("Rogue & Deauth", self._view_security()),
             ("BLE Lab", self._view_ble()),
@@ -439,10 +447,106 @@ class GhostCommandCenterWindow(QMainWindow):
         ctl_lay.addWidget(self.temp_stats_lbl)
         lay.addWidget(ctl_card)
 
-        chart_card, chart_lay = make_card("Silicon Die Thermal Trend (Real On-Chip Telemetry)")
         self.temp_chart = MplChartWidget("ESP32-S3 Die Temperature (C)")
-        chart_lay.addWidget(self.temp_chart)
-        lay.addWidget(chart_card, 1)
+        lay.addWidget(self.temp_chart, 1)
+        return w
+
+    def _view_screen_mirror(self) -> QWidget:
+        w = QWidget()
+        w.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        w.installEventFilter(self)
+        self.mirror_page = w
+        lay = QHBoxLayout(w)
+        lay.setContentsMargins(14, 14, 14, 14)
+        lay.setSpacing(12)
+
+        self.mirror_w = 240
+        self.mirror_h = 320
+        self.mirror_swap = False
+        self.mirror_smooth = False
+        self.mirror_frames = 0
+        self.mirror_img = QImage(self.mirror_w, self.mirror_h, QImage.Format.Format_RGB888)
+        self.mirror_img.fill(QColor(PALETTE["bg_console"]))
+
+        canvas_wrap = QFrame()
+        canvas_wrap.setObjectName("Card")
+        c_lay = QVBoxLayout(canvas_wrap)
+        c_lay.setContentsMargins(8, 8, 8, 8)
+        self.mirror_canvas = QLabel()
+        self.mirror_canvas.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.mirror_canvas.setStyleSheet(f"background-color: {PALETTE['bg_console']}; border: 1px solid {PALETTE['border_subtle']};")
+        self.mirror_canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        c_lay.addWidget(self.mirror_canvas, 1)
+        self.mirror_info_lbl = QLabel("Resolution: 240x320 (ST7789 Ready) | Frames: 0 | Mode: Sharp (1:1)")
+        self.mirror_info_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.mirror_info_lbl.setStyleSheet(f"color: {PALETTE['text_secondary']}; font-family: Consolas; font-size: 11px;")
+        c_lay.addWidget(self.mirror_info_lbl)
+        lay.addWidget(canvas_wrap, 1)
+
+        ctrl = QFrame()
+        ctrl.setObjectName("Card")
+        ctrl.setFixedWidth(220)
+        cl = QVBoxLayout(ctrl)
+        cl.setContentsMargins(12, 12, 12, 12)
+        cl.setSpacing(10)
+        hdr = QLabel("CONTROLS")
+        hdr.setObjectName("SectionTitle")
+        hdr.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        cl.addWidget(hdr)
+
+        dpad = QGridLayout()
+        dpad.setSpacing(6)
+        btn_up = QPushButton("▲")
+        btn_left = QPushButton("◀")
+        btn_ok = QPushButton("●")
+        btn_right = QPushButton("▶")
+        btn_down = QPushButton("▼")
+        for b, act in ((btn_up, "up"), (btn_left, "left"), (btn_ok, "select"), (btn_right, "right"), (btn_down, "down")):
+            b.setFixedSize(46, 40)
+            b.clicked.connect(lambda _=False, a=act: self._send_cmd(f"input {a}"))
+        dpad.addWidget(btn_up, 0, 1)
+        dpad.addWidget(btn_left, 1, 0)
+        dpad.addWidget(btn_ok, 1, 1)
+        dpad.addWidget(btn_right, 1, 2)
+        dpad.addWidget(btn_down, 2, 1)
+        cl.addLayout(dpad)
+
+        hint = QLabel("WASD / Arrows / Enter")
+        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hint.setStyleSheet(f"color: {PALETTE['text_muted']}; font-size: 10px;")
+        cl.addWidget(hint)
+
+        r1 = QHBoxLayout()
+        b_start = QPushButton("Start")
+        b_start.setObjectName("PrimaryBtn")
+        b_start.clicked.connect(lambda: self._send_cmd("mirror on"))
+        b_stop = QPushButton("Stop")
+        b_stop.setObjectName("DangerBtn")
+        b_stop.clicked.connect(lambda: self._send_cmd("mirror off"))
+        r1.addWidget(b_start)
+        r1.addWidget(b_stop)
+        cl.addLayout(r1)
+
+        b_ref = QPushButton("Refresh Frame")
+        b_ref.clicked.connect(lambda: self._send_cmd("mirror refresh"))
+        cl.addWidget(b_ref)
+
+        r2 = QHBoxLayout()
+        self.btn_mirror_swap = QPushButton("Swap: OFF")
+        self.btn_mirror_swap.clicked.connect(self._toggle_mirror_swap)
+        self.btn_mirror_qual = QPushButton("Sharp")
+        self.btn_mirror_qual.clicked.connect(self._toggle_mirror_quality)
+        r2.addWidget(self.btn_mirror_swap)
+        r2.addWidget(self.btn_mirror_qual)
+        cl.addLayout(r2)
+
+        b_shot = QPushButton("Screenshot")
+        b_shot.clicked.connect(self._save_mirror_screenshot)
+        cl.addWidget(b_shot)
+        cl.addStretch(1)
+        lay.addWidget(ctrl)
+
+        self._render_mirror_pixmap()
         return w
 
     def _view_wifi(self) -> QWidget:
@@ -902,7 +1006,8 @@ class GhostCommandCenterWindow(QMainWindow):
         self._history_idx = -1
 
     def eventFilter(self, obj, event):
-        if obj is self.console_in and event.type() == QEvent.Type.KeyPress:
+        console_in = getattr(self, "console_in", None)
+        if console_in is not None and obj is console_in and event.type() == QEvent.Type.KeyPress:
             key = event.key()
             if key == Qt.Key.Key_Up and self.cmd_history:
                 if self._history_idx == -1:
@@ -921,7 +1026,76 @@ class GhostCommandCenterWindow(QMainWindow):
                     self._history_idx = -1
                     self.console_in.clear()
                 return True
+        if obj is getattr(self, "mirror_page", None) and event.type() == QEvent.Type.KeyPress:
+            key_map = {
+                Qt.Key.Key_Up: "up", Qt.Key.Key_W: "up",
+                Qt.Key.Key_Down: "down", Qt.Key.Key_S: "down",
+                Qt.Key.Key_Left: "left", Qt.Key.Key_A: "left",
+                Qt.Key.Key_Right: "right", Qt.Key.Key_D: "right",
+                Qt.Key.Key_Return: "select", Qt.Key.Key_Enter: "select", Qt.Key.Key_Space: "select",
+            }
+            act = key_map.get(event.key())
+            if act:
+                self._send_cmd(f"input {act}")
+                return True
         return super().eventFilter(obj, event)
+
+    def _on_mirror_packet_ui(self, cmd: int, x1: int, y1: int, x2: int, y2: int, payload: bytes) -> None:
+        if cmd == 0x01:  # MIRROR_CMD_INFO
+            w = max(1, min(800, x1))
+            h = max(1, min(800, y1))
+            if w != self.mirror_w or h != self.mirror_h:
+                self.mirror_w, self.mirror_h = w, h
+                self.mirror_img = QImage(w, h, QImage.Format.Format_RGB888)
+                self.mirror_img.fill(QColor(PALETTE["bg_console"]))
+            self._render_mirror_pixmap()
+            return
+
+        if x2 < x1 or y2 < y1:
+            return
+        w = x2 - x1 + 1
+        h = y2 - y1 + 1
+        if x2 >= self.mirror_w or y2 >= self.mirror_h:
+            new_w = max(self.mirror_w, x2 + 1)
+            new_h = max(self.mirror_h, y2 + 1)
+            if new_w <= 800 and new_h <= 800:
+                self.mirror_w, self.mirror_h = new_w, new_h
+                self.mirror_img = QImage(new_w, new_h, QImage.Format.Format_RGB888)
+                self.mirror_img.fill(QColor(PALETTE["bg_console"]))
+
+        rgb = decode_mirror_pixels(cmd, w, h, payload, swap_bytes=self.mirror_swap)
+        patch = QImage(rgb, w, h, w * 3, QImage.Format.Format_RGB888)
+        from PySide6.QtGui import QPainter
+        painter = QPainter(self.mirror_img)
+        painter.drawImage(x1, y1, patch)
+        painter.end()
+        self.mirror_frames += 1
+        self._render_mirror_pixmap()
+
+    def _render_mirror_pixmap(self) -> None:
+        pix = QPixmap.fromImage(self.mirror_img)
+        target_sz = self.mirror_canvas.size()
+        if target_sz.width() > 20 and target_sz.height() > 20:
+            mode = Qt.TransformationMode.SmoothTransformation if self.mirror_smooth else Qt.TransformationMode.FastTransformation
+            pix = pix.scaled(target_sz, Qt.AspectRatioMode.KeepAspectRatio, mode)
+        self.mirror_canvas.setPixmap(pix)
+        q_lbl = "Smooth" if self.mirror_smooth else "Sharp (1:1)"
+        self.mirror_info_lbl.setText(f"Resolution: {self.mirror_w}x{self.mirror_h} | Frames: {self.mirror_frames} | Mode: {q_lbl}")
+
+    def _toggle_mirror_swap(self) -> None:
+        self.mirror_swap = not self.mirror_swap
+        self.btn_mirror_swap.setText(f"Swap: {'ON' if self.mirror_swap else 'OFF'}")
+
+    def _toggle_mirror_quality(self) -> None:
+        self.mirror_smooth = not self.mirror_smooth
+        self.btn_mirror_qual.setText("Smooth" if self.mirror_smooth else "Sharp")
+        self._render_mirror_pixmap()
+
+    def _save_mirror_screenshot(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, "Save Screen Mirror", "ghostesp_screen.png", "PNG Files (*.png)")
+        if path:
+            self.mirror_img.save(path, "PNG")
+            self.status_bar.showMessage(f"Saved screen capture to {path}")
 
     def _hardware_reset_dtr_rts(self) -> None:
         if not self.serial.running:
