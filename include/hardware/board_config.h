@@ -47,7 +47,7 @@ extern "C" {
 #define BOARD_PIN_RF_IRQ            GPIO_NUM_NC   /* Unconnected: Polled via SPI */
 #define BOARD_RF_SPI_CLOCK_HZ       8000000
 
-/* --- Dedicated Display SPI Bus (SPI3_HOST / HSPI: 1.8" ST7735S 128x160 TFT) --- */
+/* --- Dedicated Display SPI Bus (SPI3_HOST / HSPI: 2.8" ST7789 240x320 TFT + XPT2046) --- */
 #define BOARD_DISP_SPI_HOST         SPI3_HOST
 #define BOARD_PIN_DISP_MOSI         GPIO_NUM_15
 #define BOARD_PIN_DISP_SCK          GPIO_NUM_16
@@ -55,8 +55,8 @@ extern "C" {
 #define BOARD_PIN_DISP_DC           GPIO_NUM_6
 #define BOARD_PIN_DISP_RST          GPIO_NUM_7
 #define BOARD_PIN_DISP_BCKL         GPIO_NUM_NC   /* Hardwired to 3.3V rail */
-#define BOARD_DISP_WIDTH            128
-#define BOARD_DISP_HEIGHT           160
+#define BOARD_DISP_WIDTH            240
+#define BOARD_DISP_HEIGHT           320
 #define BOARD_DISP_SPI_CLOCK_HZ     20000000
 
 /* --- High-Speed Serial UART1 (GPS / Telemetry / Modem) --- */

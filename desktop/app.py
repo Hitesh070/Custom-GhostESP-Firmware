@@ -52,7 +52,7 @@ from theme import APP_STYLESHEET, PALETTE
 
 PINOUT_ROWS = [
     ("GPIO 1 / 2 / 4 / 47", "SD Card (SPI/SDMMC)", "Optional Slot (CS=4, CLK=1, MOSI=2, MISO=47)", "Board Config"),
-    ("GPIO 5 / 6 / 7 / 15 / 16", "SPI3 Display LCD", "1.8\" ST7735S TFT (CS=5, DC=6, RST=7, MOSI=15, SCK=16)", "Locked"),
+    ("GPIO 5 / 6 / 7 / 15 / 16 (+21/39/40)", "SPI3 Display + Touch", "2.8\" ST7789 240x320 (CS=5, DC=6, RST=7, MOSI=15, SCK=16) + XPT2046 (T_CS=21, T_DO=39, T_IRQ=40)", "Locked"),
     ("GPIO 8 / 9", "I2C0 Primary", "External I2C Bus (SDA=8, SCL=9)", "Configured"),
     ("GPIO 10 / 11 / 12 / 13 / 14", "SPI2 RF Front-End", "NRF24L01+PA+LNA (CS=10, MOSI=11, SCK=12, MISO=13, CE=14)", "HW Dependent"),
     ("GPIO 17 / 18", "UART2 / ESP Comm", "Internal Peer UART2 (TX=17, RX=18)", "Relocated V4"),

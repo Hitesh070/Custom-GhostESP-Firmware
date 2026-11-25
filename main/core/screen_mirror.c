@@ -30,7 +30,7 @@ static uint16_t s_checksum;
 #define USE_8BIT_MIRROR 0
 #endif
 #ifndef USE_12BIT_MIRROR
-#define USE_12BIT_MIRROR 1
+#define USE_12BIT_MIRROR 0
 #endif
 #else
 #ifndef USE_8BIT_MIRROR
