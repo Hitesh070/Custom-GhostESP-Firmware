@@ -93,7 +93,8 @@ class MplChartWidget(QWidget):
         super().__init__(parent)
         self.figure = Figure(figsize=(6, 2.8), dpi=100, facecolor=PALETTE["bg_surface"])
         self.canvas = FigureCanvas(self.figure)
-        self.canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.canvas.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
+        self.canvas.setMinimumSize(200, 140)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.ax = self.figure.add_subplot(111)
         self.title = title
@@ -120,6 +121,7 @@ def make_card(title: str) -> tuple[QFrame, QVBoxLayout]:
     layout.setSpacing(6)
     lbl = QLabel(title.upper())
     lbl.setObjectName("SectionTitle")
+    lbl.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
     layout.addWidget(lbl)
     return card, layout
 
@@ -483,7 +485,8 @@ class GhostCommandCenterWindow(QMainWindow):
         self.mirror_canvas = QLabel()
         self.mirror_canvas.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.mirror_canvas.setStyleSheet(f"background-color: {PALETTE['bg_console']}; border: 1px solid {PALETTE['border_subtle']};")
-        self.mirror_canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.mirror_canvas.setMinimumSize(1, 1)
+        self.mirror_canvas.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Ignored)
         c_lay.addWidget(self.mirror_canvas, 1)
         self.mirror_info_lbl = QLabel("Resolution: 240x320 (ST7789 Ready) | Frames: 0 | Mode: Sharp (1:1)")
         self.mirror_info_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -598,9 +601,31 @@ class GhostCommandCenterWindow(QMainWindow):
             b.clicked.connect(lambda _=False, c=cname: self._send_cmd(f"rgbmode {c}"))
             col_row.addWidget(b)
         tl.addLayout(col_row)
-        lay.addWidget(top_card)
 
-        adv_card, al = make_card("Custom RGB Mixer, Brightness & Boot Mode")
+        # Slideable LED intensity controller right in the top bar
+        int_row = QHBoxLayout()
+        int_row.addWidget(QLabel("LED Intensity:"))
+        self.rgb_bright_sld = QSlider(Qt.Orientation.Horizontal)
+        self.rgb_bright_sld.setRange(0, 100)
+        self.rgb_bright_sld.setValue(80)
+        self.rgb_bright_lbl = QLabel("80%")
+        self.rgb_bright_lbl.setFixedWidth(40)
+        self.rgb_bright_sld.valueChanged.connect(lambda v: self.rgb_bright_lbl.setText(f"{v}%"))
+        self.rgb_bright_sld.sliderReleased.connect(
+            lambda: self.serial.running and self._send_cmd(f"setneopixelbrightness {self.rgb_bright_sld.value()}")
+        )
+        btn_br = QPushButton("Apply Intensity")
+        btn_br.clicked.connect(lambda: self._send_cmd(f"setneopixelbrightness {self.rgb_bright_sld.value()}"))
+        btn_get_br = QPushButton("Read")
+        btn_get_br.clicked.connect(lambda: self._send_cmd("getneopixelbrightness"))
+        int_row.addWidget(self.rgb_bright_sld, 1)
+        int_row.addWidget(self.rgb_bright_lbl)
+        int_row.addWidget(btn_br)
+        int_row.addWidget(btn_get_br)
+        tl.addLayout(int_row)
+        lay.addWidget(top_card, 0)
+
+        adv_card, al = make_card("Custom RGB Mixer & Hardware Config")
         mix_grid = QGridLayout()
         self.rgb_sliders = {}
         self.rgb_val_lbls = {}
@@ -633,23 +658,6 @@ class GhostCommandCenterWindow(QMainWindow):
         mix_grid.addWidget(btn_apply_rgb, 1, 4, 2, 1)
         al.addLayout(mix_grid)
 
-        br_row = QHBoxLayout()
-        br_row.addWidget(QLabel("Max Brightness:"))
-        self.rgb_bright_sld = QSlider(Qt.Orientation.Horizontal)
-        self.rgb_bright_sld.setRange(0, 100)
-        self.rgb_bright_sld.setValue(80)
-        self.rgb_bright_lbl = QLabel("80%")
-        self.rgb_bright_sld.valueChanged.connect(lambda v: self.rgb_bright_lbl.setText(f"{v}%"))
-        btn_br = QPushButton("Set Brightness")
-        btn_br.clicked.connect(lambda: self._send_cmd(f"setneopixelbrightness {self.rgb_bright_sld.value()}"))
-        btn_get_br = QPushButton("Get Brightness")
-        btn_get_br.clicked.connect(lambda: self._send_cmd("getneopixelbrightness"))
-        br_row.addWidget(self.rgb_bright_sld, 1)
-        br_row.addWidget(self.rgb_bright_lbl)
-        br_row.addWidget(btn_br)
-        br_row.addWidget(btn_get_br)
-        al.addLayout(br_row)
-
         cfg_row = QHBoxLayout()
         cfg_row.addWidget(QLabel("Boot Mode:"))
         for lbl_m, mode_cmd in [("Normal", "normal"), ("Rainbow", "rainbow"), ("Stealth", "stealth")]:
@@ -671,13 +679,14 @@ class GhostCommandCenterWindow(QMainWindow):
         btn_hw_rgb.clicked.connect(self._apply_rgb_hw_config)
         cfg_row.addWidget(btn_hw_rgb)
         al.addLayout(cfg_row)
-        lay.addWidget(adv_card)
+        lay.addWidget(adv_card, 0)
 
         self.rgb_log = QPlainTextEdit()
         self.rgb_log.setReadOnly(True)
-        self.rgb_log.setMaximumHeight(130)
-        self.rgb_log.setPlaceholderText("RGB LED status & brightness telemetry appears here...")
-        lay.addWidget(self.rgb_log)
+        self.rgb_log.setMaximumHeight(110)
+        self.rgb_log.setPlaceholderText("RGB LED status & intensity telemetry appears here...")
+        lay.addWidget(self.rgb_log, 0)
+        lay.addStretch(1)
         self._update_rgb_preview()
         return w
 
@@ -1207,9 +1216,11 @@ class GhostCommandCenterWindow(QMainWindow):
     def _render_mirror_pixmap(self) -> None:
         pix = QPixmap.fromImage(self.mirror_img)
         target_sz = self.mirror_canvas.size()
-        if target_sz.width() > 20 and target_sz.height() > 20:
+        w_avail = max(1, target_sz.width() - 4)
+        h_avail = max(1, target_sz.height() - 4)
+        if w_avail > 20 and h_avail > 20:
             mode = Qt.TransformationMode.SmoothTransformation if self.mirror_smooth else Qt.TransformationMode.FastTransformation
-            pix = pix.scaled(target_sz, Qt.AspectRatioMode.KeepAspectRatio, mode)
+            pix = pix.scaled(w_avail, h_avail, Qt.AspectRatioMode.KeepAspectRatio, mode)
         self.mirror_canvas.setPixmap(pix)
         q_lbl = "Smooth" if self.mirror_smooth else "Sharp (1:1)"
         self.mirror_info_lbl.setText(f"Resolution: {self.mirror_w}x{self.mirror_h} | Frames: {self.mirror_frames} | Mode: {q_lbl}")
@@ -1542,6 +1553,11 @@ class GhostCommandCenterWindow(QMainWindow):
             ys = list(self.temp_points)
             self.temp_chart.ax.plot(xs, ys, color=PALETTE["accent_amber"], linewidth=2.0, marker="o", markersize=3)
             self.temp_chart.ax.set_ylabel("C", color=PALETTE["text_secondary"], fontsize=8)
+            y_lo = min(ys) - 3.0
+            y_hi = max(ys) + 3.0
+            self.temp_chart.ax.set_ylim(y_lo, y_hi)
+            if len(xs) > 1:
+                self.temp_chart.ax.set_xlim(0, len(xs) - 1)
         self.temp_chart.canvas.draw_idle()
 
     def _redraw_nrf_chart(self) -> None:
