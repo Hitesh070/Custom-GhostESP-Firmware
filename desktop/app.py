@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QCheckBox,
+    QColorDialog,
     QComboBox,
     QCompleter,
     QFileDialog,
@@ -32,6 +33,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QSlider,
     QSpinBox,
     QStackedWidget,
     QStatusBar,
@@ -173,6 +175,11 @@ class GhostCommandCenterWindow(QMainWindow):
 
         self.temp_poll_timer = QTimer(self)
         self.temp_poll_timer.timeout.connect(self._poll_temperature)
+        self._profile_refresh_timer = QTimer(self)
+        self._profile_refresh_timer.setSingleShot(True)
+        self._profile_refresh_timer.timeout.connect(
+            lambda: self.serial.running and self._send_cmd("profile list")
+        )
 
         self._build_ui()
         for tbl in self.findChildren(QTableWidget):
@@ -254,13 +261,14 @@ class GhostCommandCenterWindow(QMainWindow):
         body.addWidget(self.stack, 1)
         root_layout.addLayout(body, 1)
 
-        # Build all 18 views cleanly
+        # Build all 19 views cleanly
         views = [
             ("Dashboard", self._view_dashboard()),
             ("Device & Serial", self._view_serial()),
             ("Hardware Pinout", self._view_hardware()),
             ("Temperature Monitor", self._view_temperature()),
             ("Screen Mirror", self._view_screen_mirror()),
+            ("RGB LED Control", self._view_rgb_led()),
             ("Wi-Fi Discovery", self._view_wifi()),
             ("Rogue & Deauth", self._view_security()),
             ("BLE Lab", self._view_ble()),
@@ -547,6 +555,130 @@ class GhostCommandCenterWindow(QMainWindow):
         lay.addWidget(ctrl)
 
         self._render_mirror_pixmap()
+        return w
+
+    def _view_rgb_led(self) -> QWidget:
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(14, 14, 14, 14)
+        lay.setSpacing(10)
+
+        top_card, tl = make_card("Onboard WS2812B RGB LED — Advance Controller (GPIO 48)")
+        # Effects row
+        eff_row = QHBoxLayout()
+        for label, mode, obj in [
+            ("Rainbow", "rainbow", "PrimaryBtn"),
+            ("Knight Rider", "knight", ""),
+            ("Police", "police", ""),
+            ("Strobe", "strobe", ""),
+            ("LED Off", "off", "DangerBtn"),
+        ]:
+            b = QPushButton(label)
+            if obj:
+                b.setObjectName(obj)
+            b.clicked.connect(lambda _=False, m=mode: self._send_cmd(f"rgbmode {m}"))
+            eff_row.addWidget(b)
+        tl.addLayout(eff_row)
+
+        # Static Color Presets row
+        col_row = QHBoxLayout()
+        for label, cname, hex_c in [
+            ("Red", "red", "#ef4444"),
+            ("Green", "green", "#22c55e"),
+            ("Blue", "blue", "#3b82f6"),
+            ("Yellow", "yellow", "#eab308"),
+            ("Purple", "twh-purple", "#7300e1"),
+            ("Cyan", "cyan", "#06b6d4"),
+            ("Orange", "orange", "#f97316"),
+            ("White", "white", "#f8fafc"),
+            ("Pink", "pink", "#f472b6"),
+        ]:
+            b = QPushButton(label)
+            b.setStyleSheet(f"border-bottom: 3px solid {hex_c};")
+            b.clicked.connect(lambda _=False, c=cname: self._send_cmd(f"rgbmode {c}"))
+            col_row.addWidget(b)
+        tl.addLayout(col_row)
+        lay.addWidget(top_card)
+
+        adv_card, al = make_card("Custom RGB Mixer, Brightness & Boot Mode")
+        mix_grid = QGridLayout()
+        self.rgb_sliders = {}
+        self.rgb_val_lbls = {}
+        for row_idx, (ch_name, ch_color) in enumerate([("R", "#ef4444"), ("G", "#22c55e"), ("B", "#3b82f6")]):
+            lbl = QLabel(f"{ch_name}:")
+            lbl.setStyleSheet(f"color: {ch_color}; font-weight: bold;")
+            sld = QSlider(Qt.Orientation.Horizontal)
+            sld.setRange(0, 255)
+            sld.setValue(0 if ch_name != "G" else 229)
+            val_lbl = QLabel(str(sld.value()))
+            val_lbl.setFixedWidth(36)
+            sld.valueChanged.connect(lambda _v, k=ch_name: self._update_rgb_preview())
+            self.rgb_sliders[ch_name] = sld
+            self.rgb_val_lbls[ch_name] = val_lbl
+            mix_grid.addWidget(lbl, row_idx, 0)
+            mix_grid.addWidget(sld, row_idx, 1)
+            mix_grid.addWidget(val_lbl, row_idx, 2)
+
+        self.rgb_swatch = QLabel("#00E500")
+        self.rgb_swatch.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.rgb_swatch.setFixedSize(110, 68)
+        mix_grid.addWidget(self.rgb_swatch, 0, 3, 3, 1)
+
+        btn_pick = QPushButton("Color Picker")
+        btn_pick.clicked.connect(self._open_rgb_picker)
+        btn_apply_rgb = QPushButton("Apply Nearest Preset")
+        btn_apply_rgb.setObjectName("PrimaryBtn")
+        btn_apply_rgb.clicked.connect(self._apply_custom_rgb)
+        mix_grid.addWidget(btn_pick, 0, 4)
+        mix_grid.addWidget(btn_apply_rgb, 1, 4, 2, 1)
+        al.addLayout(mix_grid)
+
+        br_row = QHBoxLayout()
+        br_row.addWidget(QLabel("Max Brightness:"))
+        self.rgb_bright_sld = QSlider(Qt.Orientation.Horizontal)
+        self.rgb_bright_sld.setRange(0, 100)
+        self.rgb_bright_sld.setValue(80)
+        self.rgb_bright_lbl = QLabel("80%")
+        self.rgb_bright_sld.valueChanged.connect(lambda v: self.rgb_bright_lbl.setText(f"{v}%"))
+        btn_br = QPushButton("Set Brightness")
+        btn_br.clicked.connect(lambda: self._send_cmd(f"setneopixelbrightness {self.rgb_bright_sld.value()}"))
+        btn_get_br = QPushButton("Get Brightness")
+        btn_get_br.clicked.connect(lambda: self._send_cmd("getneopixelbrightness"))
+        br_row.addWidget(self.rgb_bright_sld, 1)
+        br_row.addWidget(self.rgb_bright_lbl)
+        br_row.addWidget(btn_br)
+        br_row.addWidget(btn_get_br)
+        al.addLayout(br_row)
+
+        cfg_row = QHBoxLayout()
+        cfg_row.addWidget(QLabel("Boot Mode:"))
+        for lbl_m, mode_cmd in [("Normal", "normal"), ("Rainbow", "rainbow"), ("Stealth", "stealth")]:
+            bm = QPushButton(lbl_m)
+            bm.clicked.connect(lambda _=False, m=mode_cmd: self._send_cmd(f"setrgbmode {m}"))
+            cfg_row.addWidget(bm)
+        cfg_row.addStretch(1)
+        cfg_row.addWidget(QLabel("Pin:"))
+        self.rgb_pin_spin = QSpinBox()
+        self.rgb_pin_spin.setRange(0, 48)
+        self.rgb_pin_spin.setValue(48)
+        cfg_row.addWidget(self.rgb_pin_spin)
+        cfg_row.addWidget(QLabel("Count:"))
+        self.rgb_cnt_spin = QSpinBox()
+        self.rgb_cnt_spin.setRange(1, 64)
+        self.rgb_cnt_spin.setValue(1)
+        cfg_row.addWidget(self.rgb_cnt_spin)
+        btn_hw_rgb = QPushButton("Apply Pin/Count")
+        btn_hw_rgb.clicked.connect(self._apply_rgb_hw_config)
+        cfg_row.addWidget(btn_hw_rgb)
+        al.addLayout(cfg_row)
+        lay.addWidget(adv_card)
+
+        self.rgb_log = QPlainTextEdit()
+        self.rgb_log.setReadOnly(True)
+        self.rgb_log.setMaximumHeight(130)
+        self.rgb_log.setPlaceholderText("RGB LED status & brightness telemetry appears here...")
+        lay.addWidget(self.rgb_log)
+        self._update_rgb_preview()
         return w
 
     def _view_wifi(self) -> QWidget:
@@ -1097,6 +1229,51 @@ class GhostCommandCenterWindow(QMainWindow):
             self.mirror_img.save(path, "PNG")
             self.status_bar.showMessage(f"Saved screen capture to {path}")
 
+    def _update_rgb_preview(self) -> None:
+        r = self.rgb_sliders["R"].value()
+        g = self.rgb_sliders["G"].value()
+        b = self.rgb_sliders["B"].value()
+        for k, v in (("R", r), ("G", g), ("B", b)):
+            self.rgb_val_lbls[k].setText(str(v))
+        hex_c = f"#{r:02X}{g:02X}{b:02X}"
+        luma = 0.299 * r + 0.587 * g + 0.114 * b
+        fg = "#04120c" if luma > 130 else "#f8fafc"
+        self.rgb_swatch.setText(hex_c)
+        self.rgb_swatch.setStyleSheet(f"background-color: {hex_c}; color: {fg}; font-family: Consolas; font-weight: bold; border-radius: 6px; border: 1px solid {PALETTE['border_subtle']};")
+
+    def _open_rgb_picker(self) -> None:
+        cur = QColor(self.rgb_sliders["R"].value(), self.rgb_sliders["G"].value(), self.rgb_sliders["B"].value())
+        chosen = QColorDialog.getColor(cur, self, "Select RGB LED Color")
+        if chosen.isValid():
+            self.rgb_sliders["R"].setValue(chosen.red())
+            self.rgb_sliders["G"].setValue(chosen.green())
+            self.rgb_sliders["B"].setValue(chosen.blue())
+
+    def _apply_custom_rgb(self) -> None:
+        r = self.rgb_sliders["R"].value()
+        g = self.rgb_sliders["G"].value()
+        b = self.rgb_sliders["B"].value()
+        presets = [
+            ("off", (0, 0, 0)),
+            ("red", (255, 0, 0)),
+            ("green", (0, 255, 0)),
+            ("blue", (0, 0, 255)),
+            ("yellow", (255, 255, 0)),
+            ("twh-purple", (115, 0, 225)),
+            ("cyan", (0, 255, 255)),
+            ("orange", (255, 165, 0)),
+            ("white", (255, 255, 255)),
+            ("pink", (255, 192, 203)),
+        ]
+        nearest = min(presets, key=lambda item: (item[1][0] - r) ** 2 + (item[1][1] - g) ** 2 + (item[1][2] - b) ** 2)[0]
+        self._send_cmd(f"rgbmode {nearest}")
+
+    def _apply_rgb_hw_config(self) -> None:
+        p = self.rgb_pin_spin.value()
+        c = self.rgb_cnt_spin.value()
+        self._send_cmd(f"setrgbpins {p} {p} {p}")
+        self._send_cmd(f"setrgbcount {c}")
+
     def _hardware_reset_dtr_rts(self) -> None:
         if not self.serial.running:
             QMessageBox.information(self, "Offline", "Connect to ESP32-S3 before toggling DTR/RTS.")
@@ -1111,7 +1288,7 @@ class GhostCommandCenterWindow(QMainWindow):
     def _apply_profile(self, pid: int) -> None:
         self._send_cmd(f"profile apply {pid}")
         if self.serial.running:
-            QTimer.singleShot(500, lambda: self._send_cmd("profile list"))
+            self._profile_refresh_timer.start(500)
 
     def _send_console_input(self) -> None:
         cmd = self.console_in.text().strip()
@@ -1172,6 +1349,10 @@ class GhostCommandCenterWindow(QMainWindow):
                 self.rf_misc_log.appendPlainText(clean)
             if cmd in ("badusb", "usbkbd") or any(k in clean for k in ("BadUSB", "USB", "usbkbd")):
                 self.usb_log.appendPlainText(clean)
+            if cmd in ("rgbmode", "setrgbmode", "setneopixelbrightness", "getneopixelbrightness", "setrgbpins", "setrgbcount") or any(
+                k in clean for k in ("RGB", "Neopixel", "Rainbow", "Police", "Strobe", "Knight")
+            ):
+                self.rgb_log.appendPlainText(clean)
             if cmd in ("help", "ghost") or any(k in clean for k in ("Usage:", "Commands:", "Description:")):
                 self.help_log.appendPlainText(clean)
 
@@ -1444,6 +1625,7 @@ class GhostCommandCenterWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         self.temp_poll_timer.stop()
+        self._profile_refresh_timer.stop()
         self.serial.disconnect()
         self.db.close()
         super().closeEvent(event)

@@ -1,4 +1,5 @@
 #include "core/screen_mirror.h"
+#include "managers/display_manager.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "lvgl.h"
@@ -165,12 +166,20 @@ void screen_mirror_init(void) {
     ESP_LOGI(TAG, "Screen mirror initialized");
 }
 
+static void mirror_invalidate_async(void *arg) {
+    (void)arg;
+    lv_obj_t *scr = lv_scr_act();
+    if (scr) {
+        lv_obj_invalidate(scr);
+    }
+}
+
 void screen_mirror_set_enabled(bool enabled) {
     s_mirror_enabled = enabled;
     if (enabled) {
         s_frame_count = 0;
         screen_mirror_send_info();
-        lv_obj_invalidate(lv_scr_act());
+        display_manager_lvgl_async_call(mirror_invalidate_async, NULL);
         ESP_LOGI(TAG, "Screen mirror enabled");
     } else {
         ESP_LOGI(TAG, "Screen mirror disabled");
@@ -183,7 +192,7 @@ bool screen_mirror_is_enabled(void) {
 
 void screen_mirror_refresh(void) {
     if (s_mirror_enabled) {
-        lv_obj_invalidate(lv_scr_act());
+        display_manager_lvgl_async_call(mirror_invalidate_async, NULL);
     }
 }
 

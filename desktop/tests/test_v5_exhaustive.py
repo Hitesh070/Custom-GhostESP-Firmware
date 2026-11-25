@@ -42,8 +42,8 @@ def _make_window(tmp_path, monkeypatch):
 def test_navigation_all_17_views(tmp_path, monkeypatch, qapp):
     win, _ = _make_window(tmp_path, monkeypatch)
     try:
-        assert win.stack.count() == 18
-        assert len(win.nav_buttons) == 18
+        assert win.stack.count() == 19
+        assert len(win.nav_buttons) == 19
         for i, btn in enumerate(win.nav_buttons):
             btn.click()
             assert win.stack.currentIndex() == i
@@ -65,7 +65,7 @@ def test_every_command_button_connected_and_offline_safe(tmp_path, monkeypatch, 
         assert len(all_buttons) >= 60
         for btn in all_buttons:
             txt = btn.text()
-            if btn in win.nav_buttons or txt in ("CONNECT", "DISCONNECT", "Refresh", "Screenshot") or "Export" in txt:
+            if btn in win.nav_buttons or txt in ("CONNECT", "DISCONNECT", "Refresh", "Screenshot", "Color Picker") or "Export" in txt:
                 continue
             btn.click()
         # Verify representative commands were queued
