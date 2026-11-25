@@ -88,7 +88,12 @@ void handle_badusb_cmd(int argc, char **argv) {
         }
     } else if (strcmp(sub, "run") == 0) {
         if (argc < 3) {
-            glog("Usage: badusb run <filename|builtin>\n");
+            glog("Usage: badusb run <filename|builtin> --confirm\n");
+            return;
+        }
+        if (argc < 4 || strcmp(argv[argc - 1], "--confirm") != 0) {
+            glog("WARNING: BadUSB injects active HID keystrokes over USB-OTG (detaches Native USB CDC on GPIO19/20).\n");
+            glog("Usage: badusb run <filename|builtin> --confirm\n");
             return;
         }
         if (strcmp(argv[2], "builtin") == 0) {
@@ -111,7 +116,12 @@ void handle_badusb_cmd(int argc, char **argv) {
         }
     } else if (strcmp(sub, "exec") == 0) {
         if (argc < 3) {
-            glog("Usage: badusb exec <size>\n");
+            glog("Usage: badusb exec <size> --confirm\n");
+            return;
+        }
+        if (argc < 4 || strcmp(argv[argc - 1], "--confirm") != 0) {
+            glog("WARNING: BadUSB exec arms remote HID payload execution over USB-OTG.\n");
+            glog("Usage: badusb exec <size> --confirm\n");
             return;
         }
         size_t size = (size_t)atoi(argv[2]);

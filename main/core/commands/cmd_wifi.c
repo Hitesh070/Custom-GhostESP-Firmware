@@ -13,6 +13,8 @@
 #include "scans/wifi/wifi_channels.h"
 #if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(GHOSTESP_NO_NATIVE_BLE)
 #include "managers/ble_manager.h"
+#include "scans/ble/advertiser_scan.h"
+#include "scans/ble/device_detect_scan.h"
 #endif
 #include "vendor/pcap.h"
 #include "esp_log.h"
@@ -61,6 +63,22 @@ void cmd_wifi_scan_start(int argc, char **argv) {
 void cmd_wifi_scan_stop(int argc, char **argv) {
     (void)argc;
     (void)argv;
+
+#if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(GHOSTESP_NO_NATIVE_BLE)
+    bool ble_was_active = false;
+    if (ble_device_detect_is_active()) {
+        ble_device_detect_stop();
+        ble_was_active = true;
+    }
+    if (advertiser_scan_is_active()) {
+        advertiser_scan_stop();
+        ble_was_active = true;
+    }
+    if (!ble_was_active && ble_is_initialized()) {
+        ble_stop();
+    }
+    ble_stop_gatt_scan();
+#endif
 
     // Properly stop any ongoing WiFi scan
     wifi_manager_stop_scan();

@@ -105,13 +105,19 @@ uint32_t rogue_detector_get_threat_count(void) {
     return s_threat_count;
 }
 
-void rogue_detector_process_ap(const uint8_t *bssid, const char *ssid, uint8_t channel, int8_t rssi, uint8_t authmode) {
-    if (!s_active || !bssid || !ssid) return;
-    if (ssid[0] == '\0') return; /* Ignore hidden / wildcard SSIDs for Evil Twin matching */
+static void rogue_detector_ingest_internal(const uint8_t *bssid, const char *ssid, uint8_t channel, int8_t rssi, uint8_t authmode, bool bypass_active_check) {
+    if (!bssid || !ssid || ssid[0] == '\0') return;
+    if (!bypass_active_check && !s_active) return;
 
     uint32_t now = get_time_ms();
+    bool emit_alert = false;
+    char alert_ssid[ROGUE_SSID_MAX_LEN] = {0};
+    char alert_orig_bssid[18] = {0};
+    char alert_new_bssid[18] = {0};
+    uint8_t alert_orig_ch = 0;
+    int8_t alert_orig_rssi = 0;
 
-    if (xSemaphoreTake(s_mutex, 0) != pdTRUE) {
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(bypass_active_check ? 100 : 0)) != pdTRUE) {
         return; /* Drop frame if mutex contended to avoid stalling Wi-Fi RX path */
     }
 
@@ -120,13 +126,18 @@ void rogue_detector_process_ap(const uint8_t *bssid, const char *ssid, uint8_t c
         if (memcmp(s_records[i].bssid, bssid, 6) == 0) {
             /* Known BSSID: check for security downgrade */
             if (s_records[i].authmode > 0 && authmode == 0) {
+                if (s_records[i].threat_type == ROGUE_TYPE_NONE) {
+                    s_threat_count++;
+                }
                 s_records[i].threat_type = ROGUE_TYPE_SECURITY_DOWNGRADE;
                 snprintf(s_records[i].evidence, sizeof(s_records[i].evidence),
                          "Security Downgrade: %s -> OPEN", auth_mode_to_str(s_records[i].authmode));
-                s_threat_count++;
             }
             /* Check for unexplained channel jump */
             if (s_records[i].channel != channel) {
+                if (s_records[i].threat_type == ROGUE_TYPE_NONE) {
+                    s_threat_count++;
+                }
                 s_records[i].threat_type = ROGUE_TYPE_CHANNEL_ANOMALY;
                 snprintf(s_records[i].evidence, sizeof(s_records[i].evidence),
                          "Channel Jump: Ch%d -> Ch%d", s_records[i].channel, channel);
@@ -139,10 +150,13 @@ void rogue_detector_process_ap(const uint8_t *bssid, const char *ssid, uint8_t c
         }
     }
 
-    /* 2. Check for duplicate SSID with different BSSID (Evil Twin) */
+    /* 2. Check for duplicate SSID with different BSSID (distinguish Enterprise/Multi-BSSID vs Evil Twin) */
     for (uint32_t i = 0; i < s_record_count; i++) {
         if (strncmp(s_records[i].ssid, ssid, ROGUE_SSID_MAX_LEN) == 0) {
-            /* Same SSID from different BSSID */
+            bool same_auth = (s_records[i].authmode == authmode);
+            bool same_oui = (memcmp(s_records[i].bssid, bssid, 3) == 0);
+            bool is_enterprise_mesh = (same_auth && (authmode == 5 || same_oui));
+
             char orig_bssid[18], new_bssid[18];
             snprintf(orig_bssid, sizeof(orig_bssid), "%02X:%02X:%02X:%02X:%02X:%02X",
                      s_records[i].bssid[0], s_records[i].bssid[1], s_records[i].bssid[2],
@@ -150,34 +164,51 @@ void rogue_detector_process_ap(const uint8_t *bssid, const char *ssid, uint8_t c
             snprintf(new_bssid, sizeof(new_bssid), "%02X:%02X:%02X:%02X:%02X:%02X",
                      bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5]);
 
-            /* Insert new rogue record */
             if (s_record_count < ROGUE_MAX_CANDIDATES) {
                 rogue_record_t *r = &s_records[s_record_count++];
                 memcpy(r->bssid, bssid, 6);
                 strncpy(r->ssid, ssid, sizeof(r->ssid) - 1);
+                r->ssid[sizeof(r->ssid) - 1] = '\0';
                 r->channel = channel;
                 r->rssi = rssi;
                 r->authmode = authmode;
-                r->threat_type = ROGUE_TYPE_EVIL_TWIN;
                 r->first_seen_ms = now;
                 r->last_seen_ms = now;
 
-                if (memcmp(s_records[i].bssid, bssid, 3) != 0) {
-                    snprintf(r->evidence, sizeof(r->evidence), "Evil Twin (OUI Mismatch vs %s)", orig_bssid);
+                if (is_enterprise_mesh) {
+                    r->threat_type = ROGUE_TYPE_NONE;
+                    snprintf(r->evidence, sizeof(r->evidence),
+                             same_oui ? "Multi-BSSID Infra (%s)" : "Enterprise ESS (%s)", orig_bssid);
                 } else {
-                    snprintf(r->evidence, sizeof(r->evidence), "Evil Twin (Clone of %s)", orig_bssid);
-                }
-                s_threat_count++;
+                    r->threat_type = (!same_auth && authmode == 0)
+                                         ? ROGUE_TYPE_SECURITY_DOWNGRADE
+                                         : ROGUE_TYPE_EVIL_TWIN;
+                    if (!same_auth) {
+                        snprintf(r->evidence, sizeof(r->evidence),
+                                 "Auth Mismatch (%s vs %s)", auth_mode_to_str(s_records[i].authmode), auth_mode_to_str(authmode));
+                    } else {
+                        snprintf(r->evidence, sizeof(r->evidence),
+                                 "Evil Twin (OUI Mismatch vs %s)", orig_bssid);
+                    }
+                    s_threat_count++;
 
-                /* Rate-limited serial alert (max 1 alert per 2 seconds) */
-                if (now - s_last_alert_time_ms > 2000) {
-                    s_last_alert_time_ms = now;
-                    glog("\n[!] ROGUE ALERT: Evil Twin detected for '%s'!\n    Primary: %s (Ch%d, %d dBm)\n    Rogue:   %s (Ch%d, %d dBm)\n",
-                         ssid, orig_bssid, s_records[i].channel, s_records[i].rssi,
-                         new_bssid, channel, rssi);
+                    if (now - s_last_alert_time_ms > 2000) {
+                        s_last_alert_time_ms = now;
+                        emit_alert = true;
+                        strncpy(alert_ssid, ssid, sizeof(alert_ssid) - 1);
+                        strncpy(alert_orig_bssid, orig_bssid, sizeof(alert_orig_bssid) - 1);
+                        strncpy(alert_new_bssid, new_bssid, sizeof(alert_new_bssid) - 1);
+                        alert_orig_ch = s_records[i].channel;
+                        alert_orig_rssi = s_records[i].rssi;
+                    }
                 }
             }
             xSemaphoreGive(s_mutex);
+            if (emit_alert) {
+                glog("\n[!] ROGUE ALERT: Suspicious AP for '%s'!\n    Primary: %s (Ch%d, %d dBm)\n    Rogue:   %s (Ch%d, %d dBm)\n",
+                     alert_ssid, alert_orig_bssid, alert_orig_ch, alert_orig_rssi,
+                     alert_new_bssid, channel, rssi);
+            }
             return;
         }
     }
@@ -187,6 +218,7 @@ void rogue_detector_process_ap(const uint8_t *bssid, const char *ssid, uint8_t c
         rogue_record_t *r = &s_records[s_record_count++];
         memcpy(r->bssid, bssid, 6);
         strncpy(r->ssid, ssid, sizeof(r->ssid) - 1);
+        r->ssid[sizeof(r->ssid) - 1] = '\0';
         r->channel = channel;
         r->rssi = rssi;
         r->authmode = authmode;
@@ -198,24 +230,31 @@ void rogue_detector_process_ap(const uint8_t *bssid, const char *ssid, uint8_t c
     xSemaphoreGive(s_mutex);
 }
 
+void rogue_detector_process_ap(const uint8_t *bssid, const char *ssid, uint8_t channel, int8_t rssi, uint8_t authmode) {
+    rogue_detector_ingest_internal(bssid, ssid, channel, rssi, authmode, false);
+}
+
 void rogue_detector_dump_status(void) {
     if (!s_mutex) rogue_detector_init();
 
-    /* If empty, auto-ingest latest scan results so report is immediate */
-    if (s_record_count == 0) {
+    bool needs_ingest = false;
+    if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+        needs_ingest = (s_record_count == 0);
+        xSemaphoreGive(s_mutex);
+    }
+
+    /* If empty, auto-ingest latest scan results safely without flipping s_active */
+    if (needs_ingest) {
         uint16_t ap_cnt = 0;
         wifi_ap_record_t *ap_list = NULL;
         ap_scan_get_results(&ap_cnt, &ap_list);
         if (ap_list && ap_cnt > 0) {
-            bool prev_active = s_active;
-            s_active = true;
             for (uint16_t i = 0; i < ap_cnt; i++) {
                 char sanitized[33] = {0};
                 memcpy(sanitized, ap_list[i].ssid, sizeof(ap_list[i].ssid));
                 sanitized[32] = '\0';
-                rogue_detector_process_ap(ap_list[i].bssid, sanitized, ap_list[i].primary, ap_list[i].rssi, ap_list[i].authmode);
+                rogue_detector_ingest_internal(ap_list[i].bssid, sanitized, ap_list[i].primary, ap_list[i].rssi, ap_list[i].authmode, true);
             }
-            s_active = prev_active;
         }
     }
 

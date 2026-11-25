@@ -432,10 +432,20 @@ typedef struct {
     action_type_t type;
     uint8_t modifiers;
     uint8_t keycode;
-    const char *string_ptr;
+    char *string_buf;
     size_t string_len;
     uint32_t delay_ms;
 } prev_action_t;
+
+static void prev_action_clear_string(prev_action_t *prev) {
+    if (prev && prev->string_buf) {
+        free(prev->string_buf);
+        prev->string_buf = NULL;
+    }
+    if (prev) {
+        prev->string_len = 0;
+    }
+}
 
 static bool transport_cancelled(const hid_transport_t *transport) {
     return transport && transport->is_cancelled && transport->is_cancelled(transport->ctx);
@@ -483,9 +493,18 @@ static int process_line(const char *line, const hid_transport_t *transport,
             *stop_flag = true;
             return -1;
         }
+        prev_action_clear_string(prev);
         prev->type = ACTION_STRING;
-        prev->string_ptr = text;
-        prev->string_len = len;
+        if (len > 0) {
+            prev->string_buf = malloc(len + 1);
+            if (prev->string_buf) {
+                memcpy(prev->string_buf, text, len);
+                prev->string_buf[len] = '\0';
+                prev->string_len = len;
+            } else {
+                prev->type = ACTION_NONE;
+            }
+        }
         if (*default_delay > 0) transport->delay(*default_delay, transport->ctx);
         if (!transport->release_keys(transport->ctx) || transport_cancelled(transport)) {
             *stop_flag = true;
@@ -515,7 +534,10 @@ static int process_line(const char *line, const hid_transport_t *transport,
                     }
                     break;
                 case ACTION_STRING:
-                    if (!transport->send_string(prev->string_ptr, prev->string_len, transport->ctx)) {
+                    if (!prev->string_buf || prev->string_len == 0) {
+                        break;
+                    }
+                    if (!transport->send_string(prev->string_buf, prev->string_len, transport->ctx)) {
                         *stop_flag = true;
                         return -1;
                     }
@@ -607,6 +629,7 @@ int hid_script_execute_file(FILE *f, const hid_transport_t *transport) {
         lines_executed++;
     }
 
+    prev_action_clear_string(&prev);
     bool released = transport->release_keys(transport->ctx);
     return (stop || !released) ? -1 : lines_executed;
 }
@@ -630,6 +653,7 @@ int hid_script_execute(char *script_buf, const hid_transport_t *transport) {
         line = strtok_r(NULL, "\n", &saveptr);
     }
 
+    prev_action_clear_string(&prev);
     bool released = transport->release_keys(transport->ctx);
     return (stop || !released) ? -1 : lines_executed;
 }

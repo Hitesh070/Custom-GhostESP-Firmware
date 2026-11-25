@@ -69,11 +69,16 @@ gpio_num_t infrared_get_rx_pin(void) {
 bool infrared_manager_init(void) {
     bool ok = sd_card_manager.is_initialized;
 #ifdef CONFIG_HAS_INFRARED
-    if (ok && CONFIG_HAS_INFRARED) {
-        gpio_reset_pin(infrared_get_tx_pin());
-        gpio_set_direction(infrared_get_tx_pin(), GPIO_MODE_OUTPUT);
-        gpio_set_level(infrared_get_tx_pin(), 0);
-        ESP_LOGI(TAG_IR_MANAGER, "IR LED pin initialized: %d", infrared_get_tx_pin());
+    if (CONFIG_HAS_INFRARED) {
+        gpio_num_t tx_pin = infrared_get_tx_pin();
+        if (tx_pin >= 0 && GPIO_IS_VALID_OUTPUT_GPIO(tx_pin)) {
+            gpio_reset_pin(tx_pin);
+            gpio_set_direction(tx_pin, GPIO_MODE_OUTPUT);
+            gpio_set_level(tx_pin, 0);
+            ESP_LOGI(TAG_IR_MANAGER, "IR LED pin initialized: %d", (int)tx_pin);
+        } else {
+            ESP_LOGW(TAG_IR_MANAGER, "IR LED pin invalid: %d", (int)tx_pin);
+        }
     }
 #endif
 #if defined(CONFIG_BUILD_CONFIG_TEMPLATE) && defined(CONFIG_HAS_INFRARED)
@@ -421,7 +426,7 @@ static bool parse_ir_file(char *buf, const char *path, infrared_signal_t **signa
 
     infrared_signal_t *list = NULL;
     size_t list_count = 0, list_capacity = 0;
-    infrared_signal_t current;
+    infrared_signal_t current = {0};
 
     bool in_block = false;
     char *saveptr;
@@ -512,7 +517,7 @@ static void ir_free_partial(infrared_signal_t **list, size_t list_count, infrare
 // PSRAM once internal RAM fragments (e.g. Cardputer).
 static bool parse_ir_file_stream(FILE *f, infrared_signal_t **signals, size_t *count) {    infrared_signal_t *list = NULL;
     size_t list_count = 0, list_capacity = 0;
-    infrared_signal_t current;
+    infrared_signal_t current = {0};
     bool in_block = false;
 
     char *linebuf = NULL;
@@ -848,46 +853,51 @@ bool infrared_manager_transmit(const infrared_signal_t *signal) {
         const InfraredCommonProtocolSpec* protocol_spec = infrared_manager_get_protocol_spec(signal->payload.message.protocol);
         if (protocol_spec) {
             InfraredCommonEncoder* enc = infrared_common_encoder_alloc(protocol_spec);
-            protocol_spec->reset(enc, (const InfraredMessage*)&signal->payload.message);
-            
-            size_t max_bits = 0;
-            for(int i=0; i<4; ++i) if(protocol_spec->databit_len[i] > max_bits) max_bits = protocol_spec->databit_len[i];
-            
-            size_t max_timings = 2 + max_bits * 2 + 10;
-            uint32_t* timings = malloc(max_timings * sizeof(uint32_t));
-            bool* enc_levels = malloc(max_timings * sizeof(bool));
-            
-            if (timings && enc_levels) {
-                size_t timing_count = 0;
-                InfraredStatus st;
-                uint32_t dur;
-                bool level;
-                st = infrared_common_encode(enc, &dur, &level);
-                while (st == InfraredStatusOk && level == false) {
+            if (!enc) {
+                ESP_LOGE(TAG_IR_MANAGER, "failed to allocate IR encoder");
+                ok = false;
+            } else {
+                protocol_spec->reset(enc, (const InfraredMessage*)&signal->payload.message);
+
+                size_t max_bits = 0;
+                for(int i=0; i<4; ++i) if(protocol_spec->databit_len[i] > max_bits) max_bits = protocol_spec->databit_len[i];
+
+                size_t max_timings = 2 + max_bits * 2 + 10;
+                uint32_t* timings = malloc(max_timings * sizeof(uint32_t));
+                bool* enc_levels = malloc(max_timings * sizeof(bool));
+
+                if (timings && enc_levels) {
+                    size_t timing_count = 0;
+                    InfraredStatus st;
+                    uint32_t dur;
+                    bool level;
                     st = infrared_common_encode(enc, &dur, &level);
-                }
-                if (st == InfraredStatusOk) {
-                    do {
-                        enc_levels[timing_count] = level;
-                        timings[timing_count++] = dur;
+                    while (st == InfraredStatusOk && level == false) {
                         st = infrared_common_encode(enc, &dur, &level);
-                    } while (st == InfraredStatusOk && timing_count < max_timings);
-                    if (st == InfraredStatusDone && timing_count < max_timings) {
-                        enc_levels[timing_count] = level;
-                        timings[timing_count++] = dur;
                     }
-                }
-                if (timing_count > 0) {
-                    infrared_rx_pause_for_tx(true);
-                    ok = send_rmt(timings, timing_count,
-                                  protocol_spec->carrier_frequency,
-                                  protocol_spec->duty_cycle, enc_levels);
-                    infrared_rx_pause_for_tx(false);
+                    if (st == InfraredStatusOk) {
+                        do {
+                            enc_levels[timing_count] = level;
+                            timings[timing_count++] = dur;
+                            st = infrared_common_encode(enc, &dur, &level);
+                        } while (st == InfraredStatusOk && timing_count < max_timings);
+                        if (st == InfraredStatusDone && timing_count < max_timings) {
+                            enc_levels[timing_count] = level;
+                            timings[timing_count++] = dur;
+                        }
+                    }
+                    if (timing_count > 0) {
+                        infrared_rx_pause_for_tx(true);
+                        ok = send_rmt(timings, timing_count,
+                                      protocol_spec->carrier_frequency,
+                                      protocol_spec->duty_cycle, enc_levels);
+                        infrared_rx_pause_for_tx(false);
+                    }
                 }
                 free(timings);
                 free(enc_levels);
+                infrared_common_encoder_free(enc);
             }
-            infrared_common_encoder_free(enc);
         } else {
             ESP_LOGE(TAG_IR_MANAGER, "unsupported IR protocol: %s", signal->payload.message.protocol);
             ok = false;

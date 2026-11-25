@@ -2867,6 +2867,11 @@ void wifi_manager_stop_scan() {
         return;
     }
 
+    if (initial_ap_count == 0 && ap_count > 0 && scanned_aps != NULL) {
+        glog("WiFi scan already complete (%u cached APs preserved).\n", ap_count);
+        return;
+    }
+
     // only print AP count once, no need for both "Initial" and "Actual"
     printf("Found %u access points\n", initial_ap_count);
     TERMINAL_VIEW_ADD_TEXT("Found %u access points\n", initial_ap_count);
@@ -4900,20 +4905,26 @@ static void karma_send_probe_response(const uint8_t *sta_mac, const char *ssid) 
 }
 
 static void karma_probe_request_callback(void *buf, wifi_promiscuous_pkt_type_t type) {
-    if (type != WIFI_PKT_MGMT) return;
+    if (!buf || type != WIFI_PKT_MGMT) return;
     const wifi_promiscuous_pkt_t *pkt = (wifi_promiscuous_pkt_t *)buf;
+    if (pkt->rx_ctrl.sig_len < 26) return;
     const wifi_ieee80211_packet_t *ipkt = (wifi_ieee80211_packet_t *)pkt->payload;
     const wifi_ieee80211_hdr_t *hdr = &ipkt->hdr;
     uint8_t subtype = (hdr->frame_ctrl & 0xF0) >> 4;
     if (subtype != 4) return;
     const uint8_t *payload = ipkt->payload;
+    int body_len = pkt->rx_ctrl.sig_len - 24;
     int ssid_offset = 0;
-    while (ssid_offset < pkt->rx_ctrl.sig_len - 24) {
-        if (payload[ssid_offset] == 0x00) { // SSID IE
-            uint8_t ssid_len = payload[ssid_offset + 1];
-            if (ssid_len > 0 && ssid_len < 33) {
+    while (ssid_offset + 2 <= body_len) {
+        uint8_t ie_id = payload[ssid_offset];
+        uint8_t ie_len = payload[ssid_offset + 1];
+        if (ssid_offset + 2 + ie_len > body_len) {
+            break;
+        }
+        if (ie_id == 0x00) { // SSID IE
+            if (ie_len > 0 && ie_len < 33) {
                 char probed_ssid[33] = {0};
-                memcpy(probed_ssid, &payload[ssid_offset + 2], ssid_len);
+                memcpy(probed_ssid, &payload[ssid_offset + 2], ie_len);
                 if (!karma_ssid_manual_mode) {
                     karma_add_ssid(probed_ssid);
                 }
@@ -4926,7 +4937,7 @@ static void karma_probe_request_callback(void *buf, wifi_promiscuous_pkt_type_t 
             }
             break;
         }
-        ssid_offset += payload[ssid_offset + 1] + 2;
+        ssid_offset += ie_len + 2;
     }
 }
 
@@ -5064,12 +5075,6 @@ void wifi_manager_stop_karma(void) {
         return;
     }
     karma_running = false;
-    karma_ssid_count = 0;
-    free(karma_ssid_cache);
-    karma_ssid_cache = NULL;
-    karma_ssid_index = 0;
-    karma_ssid_manual_mode = false;
-    strncpy(karma_portal_file, "default", sizeof(karma_portal_file));
     int wait_count = 0;
     while (karma_task_handle != NULL && wait_count < 30) {
         vTaskDelay(pdMS_TO_TICKS(100));
@@ -5080,6 +5085,12 @@ void wifi_manager_stop_karma(void) {
         vTaskDelete(karma_task_handle);
         karma_task_handle = NULL;
     }
+    karma_ssid_count = 0;
+    free(karma_ssid_cache);
+    karma_ssid_cache = NULL;
+    karma_ssid_index = 0;
+    karma_ssid_manual_mode = false;
+    strncpy(karma_portal_file, "default", sizeof(karma_portal_file));
     printf("Karma test stopped\n");
     TERMINAL_VIEW_ADD_TEXT("Karma test stopped\n");
 }

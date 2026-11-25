@@ -70,14 +70,18 @@ esp_err_t nrf24_lab_init(void) {
     if (s_initialized) return ESP_OK;
 
     /* Verify CE and CS GPIOs */
-    gpio_config_t ce_cfg = {
-        .pin_bit_mask = (1ULL << BOARD_PIN_RF_CE),
-        .mode = GPIO_MODE_OUTPUT,
-        .pull_up_en = GPIO_PULLUP_DISABLE,
-        .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_DISABLE,
-    };
-    gpio_config(&ce_cfg);
+    static bool s_ce_configured = false;
+    if (!s_ce_configured) {
+        gpio_config_t ce_cfg = {
+            .pin_bit_mask = (1ULL << BOARD_PIN_RF_CE),
+            .mode = GPIO_MODE_OUTPUT,
+            .pull_up_en = GPIO_PULLUP_DISABLE,
+            .pull_down_en = GPIO_PULLDOWN_DISABLE,
+            .intr_type = GPIO_INTR_DISABLE,
+        };
+        gpio_config(&ce_cfg);
+        s_ce_configured = true;
+    }
     gpio_set_level(BOARD_PIN_RF_CE, 0);
 
     /* Check if SPI2 bus is already initialized by board HAL */
@@ -114,6 +118,15 @@ esp_err_t nrf24_lab_init(void) {
     return ESP_OK;
 }
 
+void nrf24_lab_deinit(void) {
+    gpio_set_level(BOARD_PIN_RF_CE, 0);
+    if (s_spi_dev) {
+        spi_bus_remove_device(s_spi_dev);
+        s_spi_dev = NULL;
+    }
+    s_initialized = false;
+}
+
 esp_err_t nrf24_lab_read_registers(nrf24_registers_t *regs) {
     if (!regs) return ESP_ERR_INVALID_ARG;
     if (!s_initialized) {
@@ -135,7 +148,14 @@ esp_err_t nrf24_lab_read_registers(nrf24_registers_t *regs) {
     regs->feature     = spi_read_reg(REG_FEATURE);
 
     /* Verification: If all 0x00 or all 0xFF, chip is unpowered or disconnected */
-    regs->is_responsive = (regs->config != 0x00 && regs->config != 0xFF);
+    regs->is_responsive = (regs->config != 0x00 && regs->config != 0xFF &&
+                           regs->status != 0x00 && regs->status != 0xFF);
+    board_set_periph_presence(PERIPH_ID_SPI2_NRF24,
+                              regs->is_responsive ? HW_PRESENCE_AVAILABLE : HW_PRESENCE_DISCONNECTED,
+                              ESP_OK);
+    if (!regs->is_responsive) {
+        nrf24_lab_deinit();
+    }
     return ESP_OK;
 }
 
@@ -214,27 +234,39 @@ void nrf24_lab_dump_registers(void) {
 }
 
 void nrf24_lab_run_channel_sweep(uint32_t samples_per_channel) {
-    if (!s_initialized) nrf24_lab_init();
+    nrf24_registers_t r;
+    if (nrf24_lab_read_registers(&r) != ESP_OK || !r.is_responsive) {
+        glog("\n[!] HARDWARE UNRESPONSIVE: Cannot run 2.4GHz channel sweep (NRF24 CONFIG=0x%02X STATUS=0x%02X).\n",
+             r.config, r.status);
+        glog("    Connect powered NRF24L01+ module on SPI2 (CS=10, MOSI=11, SCK=12, MISO=13, CE=14) first.\n\n");
+        return;
+    }
     if (samples_per_channel == 0) samples_per_channel = 10;
+    if (samples_per_channel > 100) samples_per_channel = 100;
 
-    glog("\nStarting 126-Channel RF Activity Sweep (2.400 - 2.525 GHz)...\n");
+    glog("\nStarting 126-Channel RF Activity Sweep (2.400 - 2.525 GHz, %lu samples/ch)...\n",
+         (unsigned long)samples_per_channel);
 
-    /* Put NRF24 in RX mode with CRC disabled for raw energy capture */
+    uint8_t prev_config = r.config;
+    uint8_t prev_ch = r.rf_ch;
+    /* Put NRF24 in Standby-I (CE=0) to configure RX mode cleanly */
+    gpio_set_level(BOARD_PIN_RF_CE, 0);
     spi_write_reg(REG_CONFIG, 0x03); /* PWR_UP=1, PRIM_RX=1 */
-    gpio_set_level(BOARD_PIN_RF_CE, 1);
     vTaskDelay(pdMS_TO_TICKS(5));
 
     glog(" CH  | Freq (GHz) | Activity Histogram (%% of samples Carrier Detected)\n");
     glog("-----+------------+------------------------------------------------------\n");
 
-    for (uint8_t ch = 0; ch < 126; ch += 2) {
+    for (uint8_t ch = 0; ch < 126; ch++) {
+        gpio_set_level(BOARD_PIN_RF_CE, 0);
         spi_write_reg(REG_RF_CH, ch);
+        gpio_set_level(BOARD_PIN_RF_CE, 1);
         uint32_t hits = 0;
 
         for (uint32_t s = 0; s < samples_per_channel; s++) {
             esp_rom_delay_us(170); /* Dwell time for PLL lock & RPD latch */
             uint8_t rpd = spi_read_reg(REG_RPD);
-            if (rpd & 1) hits++;
+            if (rpd & 0x01) hits++;
         }
 
         uint32_t pct = (hits * 100) / samples_per_channel;
@@ -250,32 +282,46 @@ void nrf24_lab_run_channel_sweep(uint32_t samples_per_channel) {
     }
 
     gpio_set_level(BOARD_PIN_RF_CE, 0);
-    glog("Sweep complete.\n\n");
+    spi_write_reg(REG_RF_CH, prev_ch);
+    spi_write_reg(REG_CONFIG, prev_config);
+    glog("Sweep complete (126/126 channels scanned).\n\n");
 }
 
-void nrf24_lab_run_benchmark(uint32_t packets_to_send) {
-    if (!s_initialized) nrf24_lab_init();
-    if (packets_to_send == 0) packets_to_send = 100;
-
-    glog("\nExecuting RF Link Benchmark (%lu packets)...\n", (unsigned long)packets_to_send);
-    glog(" [Note: Benchmark tests transmission timing and PLL lock reliability on SPI2]\n");
-
-    uint32_t successful = 0;
-    uint32_t start_time = (uint32_t)(esp_timer_get_time() / 1000ULL);
-
-    for (uint32_t i = 0; i < packets_to_send; i++) {
-        spi_write_reg(REG_RF_CH, 76); /* Standard 2.476 GHz channel */
-        uint8_t status = spi_read_reg(REG_STATUS);
-        if (status != 0xFF && status != 0x00) successful++;
-        esp_rom_delay_us(500);
+void nrf24_lab_run_benchmark(uint32_t iterations) {
+    nrf24_registers_t r;
+    if (nrf24_lab_read_registers(&r) != ESP_OK || !r.is_responsive) {
+        glog("\n[!] HARDWARE UNRESPONSIVE: Cannot run SPI2 register benchmark (CONFIG=0x%02X STATUS=0x%02X).\n\n",
+             r.config, r.status);
+        return;
     }
+    if (iterations == 0) iterations = 100;
+    if (iterations > 5000) iterations = 5000;
 
-    uint32_t duration_ms = (uint32_t)(esp_timer_get_time() / 1000ULL) - start_time;
-    float pdr = (float)successful * 100.0f / (float)packets_to_send;
+    glog("\nExecuting NRF24 SPI2 Register Echo & PLL Switch Diagnostic (%lu cycles)...\n",
+         (unsigned long)iterations);
+    glog(" [Note: Tests real SPI2 register readback integrity & RF_CH write/verify; does not transmit OTA frames]\n");
 
-    glog(" Benchmark Results:\n");
-    glog("  Transmitted: %lu packets\n", (unsigned long)packets_to_send);
-    glog("  Successful:  %lu packets\n", (unsigned long)successful);
-    glog("  PDR:         %.1f %%\n", pdr);
-    glog("  Total Time:  %lu ms\n\n", (unsigned long)duration_ms);
+    uint8_t orig_ch = r.rf_ch;
+    uint32_t passed = 0;
+    uint64_t start_us = (uint64_t)esp_timer_get_time();
+
+    gpio_set_level(BOARD_PIN_RF_CE, 0);
+    for (uint32_t i = 0; i < iterations; i++) {
+        uint8_t test_ch = (uint8_t)(i % 126);
+        spi_write_reg(REG_RF_CH, test_ch);
+        uint8_t readback = spi_read_reg(REG_RF_CH);
+        uint8_t status = spi_read_reg(REG_STATUS);
+        if (readback == test_ch && status != 0xFF && status != 0x00) {
+            passed++;
+        }
+    }
+    spi_write_reg(REG_RF_CH, orig_ch);
+
+    uint32_t duration_ms = (uint32_t)(((uint64_t)esp_timer_get_time() - start_us) / 1000ULL);
+    float pass_pct = (float)passed * 100.0f / (float)iterations;
+
+    glog(" Diagnostic Results:\n");
+    glog("  SPI Cycles   : %lu\n", (unsigned long)iterations);
+    glog("  Verified OK  : %lu (%.1f%%)\n", (unsigned long)passed, pass_pct);
+    glog("  Elapsed Time : %lu ms\n\n", (unsigned long)duration_ms);
 }

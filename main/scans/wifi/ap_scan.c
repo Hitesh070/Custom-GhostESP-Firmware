@@ -818,6 +818,11 @@ void ap_scan_stop(void) {
         return;
     }
 
+    if (initial_ap_count == 0 && ap_count > 0 && scanned_aps != NULL) {
+        glog("AP scan already complete (%u cached APs preserved).\n", ap_count);
+        return;
+    }
+
     printf("Found %u access points\n", initial_ap_count);
     TERMINAL_VIEW_ADD_TEXT("Found %u access points\n", initial_ap_count);
 

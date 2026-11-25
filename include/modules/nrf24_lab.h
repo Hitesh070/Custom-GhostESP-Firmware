@@ -31,6 +31,11 @@ typedef struct {
 esp_err_t nrf24_lab_init(void);
 
 /**
+ * @brief Deinitialize NRF24 SPI device handle to release SPI2 CS cleanly.
+ */
+void nrf24_lab_deinit(void);
+
+/**
  * @brief Read back and decode all primary NRF24 registers over SPI2.
  *
  * @param regs Output struct populated with register values.

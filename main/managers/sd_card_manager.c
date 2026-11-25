@@ -461,12 +461,21 @@ sd_card_manager_t sd_card_manager = {
     .d2pin = -1,
     .d3pin = -1,
 #elif defined(CONFIG_USING_MMC)
+#ifdef CONFIG_IDF_TARGET_ESP32S3
+    .clkpin = 1,
+    .cmdpin = 2,
+    .d0pin = 4,
+    .d1pin = -1,
+    .d2pin = -1,
+    .d3pin = -1,
+#else
     .clkpin = 19,
     .cmdpin = 18,
     .d0pin = 20,
     .d1pin = 21,
     .d2pin = 22,
     .d3pin = 23,
+#endif
 #else
     .clkpin = -1,
     .cmdpin = -1,
@@ -1180,7 +1189,9 @@ esp_err_t sd_card_init(void) {
     if (bus_ret == ESP_OK) {
       bus_init_success = true;
       sd_spi_bus_track(SPI2_HOST, true);
-    } else if (bus_ret != ESP_ERR_INVALID_STATE) {
+    } else if (bus_ret == ESP_ERR_INVALID_STATE) {
+      sd_spi_bus_track(SPI2_HOST, false);
+    } else {
       shared_spi_guard_resume_lvgl_if_needed(shared_spi_guard_active, false);
       printf("Failed to initialize SPI bus: %s\n", esp_err_to_name(bus_ret));
       return bus_ret;
@@ -1224,7 +1235,9 @@ esp_err_t sd_card_init(void) {
     if (bus_ret == ESP_OK) {
       bus_init_success = true;
       sd_spi_bus_track(SPI2_HOST, true);
-    } else if (bus_ret != ESP_ERR_INVALID_STATE) {
+    } else if (bus_ret == ESP_ERR_INVALID_STATE) {
+      sd_spi_bus_track(SPI2_HOST, false);
+    } else {
       shared_spi_guard_resume_lvgl_if_needed(shared_spi_guard_active, false);
       printf("Failed to initialize SPI bus: %s\n", esp_err_to_name(bus_ret));
       return bus_ret;

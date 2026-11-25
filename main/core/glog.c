@@ -68,6 +68,7 @@ static inline void glog_unlock(void) {
 static inline void glog_emit(const char *buf) {
     glog_out_lock();
     printf("%s", buf);
+    fflush(stdout);
     glog_out_unlock();
     if (esp_comm_manager_should_forward_output()) {
         esp_comm_manager_send_response((const uint8_t *)buf, strlen(buf));

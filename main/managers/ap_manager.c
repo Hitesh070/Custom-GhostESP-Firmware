@@ -551,8 +551,8 @@ esp_err_t api_sd_card_delete_file_handler(httpd_req_t *req) {
     char filepath[256 + 1];
 
     size_t query_len = httpd_req_get_url_query_len(req) + 1;
-    if (query_len > 1) {
-        char query[query_len];
+    if (query_len > 1 && query_len <= 1024) {
+        char query[1025];
         httpd_req_get_url_query_str(req, query, query_len);
 
         char path[256];

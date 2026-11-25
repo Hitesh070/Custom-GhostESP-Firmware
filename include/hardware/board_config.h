@@ -345,6 +345,15 @@ hw_presence_t board_check_nrf24_presence(void);
 hw_presence_t board_check_i2c_presence(uint8_t addr);
 
 /**
+ * @brief Scan Primary I2C bus (0x08..0x77) for responding devices.
+ *
+ * @param found_addrs Optional output buffer for detected 7-bit addresses.
+ * @param max_addrs Capacity of found_addrs.
+ * @return Number of ACKed devices, or -1 if bus could not be initialized.
+ */
+int board_scan_i2c_bus(uint8_t *found_addrs, int max_addrs);
+
+/**
  * @brief Perform a non-destructive display hardware presence check.
  *
  * @return HW_PRESENCE_AVAILABLE or HW_PRESENCE_DISCONNECTED.

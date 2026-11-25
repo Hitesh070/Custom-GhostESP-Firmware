@@ -1740,7 +1740,9 @@ void cleanup_pcap_queue(void) {
         // drain any remaining items and release pool slots
         pcap_q_item_t item;
         while (xQueueReceive(s_pcap_q, &item, 0) == pdTRUE) {
-            pcap_pool_release_slot(item.slot_idx);
+            if (item.slot_idx != UINT8_MAX) {
+                pcap_pool_release_slot(item.slot_idx);
+            }
         }
         vQueueDelete(s_pcap_q);
         s_pcap_q = NULL;
@@ -3511,6 +3513,9 @@ bool is_eapol_response(const wifi_promiscuous_pkt_t *pkt) {
 }
 
 bool is_pwn_response(const wifi_promiscuous_pkt_t *pkt) {
+    if (!pkt || pkt->rx_ctrl.sig_len < 1) {
+        return false;
+    }
     const uint8_t *frame = pkt->payload;
 
     if (frame[0] == 0x80) {

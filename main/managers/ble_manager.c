@@ -224,12 +224,11 @@ void nimble_host_task(void *param) {
 
 static BaseType_t ble_create_host_task(void) {
 #if defined(CONFIG_SPIRAM)
-    /* 4096 bytes is standard NimBLE host stack size (1024 words).
-     * Try internal RAM first (4096 bytes); if contiguous internal block
-     * is unavailable due to Wi-Fi DMA allocations, seamlessly fall back
-     * to PSRAM (CONFIG_SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY=y). */
-    const uint32_t stack_words = 1024;
-    const size_t stack_bytes = stack_words * sizeof(StackType_t);
+    /* ESP-IDF Xtensa FreeRTOS StackType_t is uint8_t (1 byte).
+     * Allocate a full 6144-byte stack for nimble_host: try internal SRAM first,
+     * falling back to Octal PSRAM when internal SRAM is fragmented. */
+    const size_t stack_bytes = NIMBLE_HOST_TASK_STACK_SIZE;
+    const uint32_t stack_depth = (uint32_t)(stack_bytes / sizeof(StackType_t));
 
     if (!nimble_host_task_stack) {
         nimble_host_task_stack = heap_caps_malloc(stack_bytes,
@@ -246,7 +245,7 @@ static BaseType_t ble_create_host_task(void) {
     }
     if (nimble_host_task_stack && nimble_host_task_buffer) {
         nimble_host_task_handle = xTaskCreateStatic(nimble_host_task, "nimble_host",
-                                                   stack_words, NULL, 5,
+                                                   stack_depth, NULL, 5,
                                                    nimble_host_task_stack,
                                                    nimble_host_task_buffer);
         if (nimble_host_task_handle) {
@@ -263,7 +262,7 @@ static BaseType_t ble_create_host_task(void) {
         nimble_host_task_buffer = NULL;
     }
 #endif
-    return xTaskCreate(nimble_host_task, "nimble_host", 4096,
+    return xTaskCreate(nimble_host_task, "nimble_host", NIMBLE_HOST_TASK_STACK_SIZE,
                        NULL, 5, &nimble_host_task_handle);
 }
 
@@ -708,8 +707,12 @@ void airtag_scanner_callback(struct ble_gap_event *event, size_t len) {
                 memcpy(new_tag->addr.val, event->disc.addr.val, 6);
                 new_tag->addr.type = event->disc.addr.type;
                 new_tag->rssi = event->disc.rssi;
-                memcpy(new_tag->payload, payload, payloadLength);
-                new_tag->payload_len = payloadLength;
+                size_t copy_len = payloadLength;
+                if (copy_len > sizeof(new_tag->payload)) {
+                    copy_len = sizeof(new_tag->payload);
+                }
+                memcpy(new_tag->payload, payload, copy_len);
+                new_tag->payload_len = copy_len;
                 new_tag->selected_for_spoofing = false;
                 discovered_airtag_count++;
                 airTagCount++; // Increment the original counter too, maybe rename it later
@@ -950,8 +953,12 @@ bool ble_init_with_pre_host(ble_pre_host_init_fn init_fn,
 
         ble_suspend_networking();
 
-        memset(handlers, 0, sizeof(handlers));
-        handler_count = 0;
+        /* Only initialize handlers array on very first init if empty; preserve handlers
+         * registered right before ble_start_scanning() calls ble_init(). */
+        if (handler_count < 0 || handler_count > MAX_HANDLERS) {
+            memset(handlers, 0, sizeof(handlers));
+            handler_count = 0;
+        }
 
         // Release Classic BT controller memory on native-controller targets.
         // ESP32-P4 has no local controller; its hosted BT controller lives on
@@ -1110,6 +1117,8 @@ void ble_deinit(void) {
         ble_pending_clear = false;
         ble_cb_busy = false;
         ble_suspend_allowed = true;
+        memset(handlers, 0, sizeof(handlers));
+        handler_count = 0;
         ESP_LOGI(TAG_BLE, "BLE deinitialized successfully.");
         TERMINAL_VIEW_ADD_TEXT("BLE deinitialized successfully.\n");
 
@@ -1142,11 +1151,6 @@ void ble_stop(void) {
 
     status_display_show_status("BLE Stopping");
 
-    if (!ble_gap_disc_active()) {
-        ble_deinit();
-        return;
-    }
-
     last_company_id_valid = false;
 
     // Stop and delete the flush timer if it exists
@@ -1154,6 +1158,13 @@ void ble_stop(void) {
         esp_timer_stop(flush_timer);
         esp_timer_delete(flush_timer);
         flush_timer = NULL;
+    }
+
+    if (!ble_gap_disc_active()) {
+        pcap_flush_buffer_to_file();
+        pcap_file_close();
+        ble_deinit();
+        return;
     }
 
     rgb_manager_set_color(&rgb_manager, 0, 0, 0, 0, false);

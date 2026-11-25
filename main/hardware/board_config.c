@@ -439,6 +439,39 @@ hw_presence_t board_check_i2c_presence(uint8_t addr) {
     return HW_PRESENCE_DISCONNECTED;
 }
 
+int board_scan_i2c_bus(uint8_t *found_addrs, int max_addrs) {
+    i2c_master_bus_config_t i2c_bus_config = {
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .i2c_port = BOARD_I2C_PORT,
+        .scl_io_num = BOARD_PIN_I2C_SCL,
+        .sda_io_num = BOARD_PIN_I2C_SDA,
+        .glitch_ignore_cnt = 7,
+        .flags.enable_internal_pullup = true,
+    };
+
+    i2c_master_bus_handle_t bus_handle;
+    esp_err_t err = i2c_new_master_bus(&i2c_bus_config, &bus_handle);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "I2C0 bus scan skipped: %s", esp_err_to_name(err));
+        return -1;
+    }
+
+    int count = 0;
+    for (uint8_t addr = 0x08; addr <= 0x77; addr++) {
+        if (i2c_master_probe(bus_handle, addr, 15) == ESP_OK) {
+            if (found_addrs && count < max_addrs) {
+                found_addrs[count] = addr;
+            }
+            count++;
+        }
+    }
+    i2c_del_master_bus(bus_handle);
+    board_set_periph_presence(PERIPH_ID_I2C0,
+                              (count > 0) ? HW_PRESENCE_AVAILABLE : HW_PRESENCE_DISCONNECTED,
+                              ESP_OK);
+    return count;
+}
+
 hw_presence_t board_check_display_presence(void) {
     BOARD_LOCK();
     hw_presence_t st = s_periph_table[PERIPH_ID_SPI3_DISPLAY].presence;
@@ -599,7 +632,7 @@ esp_err_t board_init(void) {
     s_periph_table[PERIPH_ID_I2C0].id = PERIPH_ID_I2C0;
     s_periph_table[PERIPH_ID_I2C0].name = "Primary I2C (I2C0)";
     s_periph_table[PERIPH_ID_I2C0].pin_mask = (1ULL << BOARD_PIN_I2C_SDA) | (1ULL << BOARD_PIN_I2C_SCL);
-    s_periph_table[PERIPH_ID_I2C0].presence = HW_PRESENCE_AVAILABLE;
+    s_periph_table[PERIPH_ID_I2C0].presence = HW_PRESENCE_UNKNOWN;
 
     /* Dedicated RF SPI (SPI2): NRF24L01+PA+LNA */
     s_pin_registry[BOARD_PIN_RF_SPI_CS].owner = PERIPH_ID_SPI2_NRF24;
@@ -669,7 +702,7 @@ esp_err_t board_init(void) {
                                                       (1ULL << BOARD_PIN_DISP_RST) |
                                                       (1ULL << BOARD_PIN_DISP_MOSI) |
                                                       (1ULL << BOARD_PIN_DISP_SCK);
-    s_periph_table[PERIPH_ID_SPI3_DISPLAY].presence = HW_PRESENCE_AVAILABLE;
+    s_periph_table[PERIPH_ID_SPI3_DISPLAY].presence = HW_PRESENCE_UNKNOWN;
 
     /* UART1: GPIO 43 (TX), GPIO 44 (RX) */
     s_pin_registry[BOARD_PIN_UART1_TX].owner = PERIPH_ID_UART1;
@@ -701,7 +734,7 @@ esp_err_t board_init(void) {
     s_periph_table[PERIPH_ID_UART2].id = PERIPH_ID_UART2;
     s_periph_table[PERIPH_ID_UART2].name = "UART2 Expansion";
     s_periph_table[PERIPH_ID_UART2].pin_mask = (1ULL << BOARD_PIN_UART2_TX) | (1ULL << BOARD_PIN_UART2_RX);
-    s_periph_table[PERIPH_ID_UART2].presence = HW_PRESENCE_AVAILABLE;
+    s_periph_table[PERIPH_ID_UART2].presence = HW_PRESENCE_UNKNOWN;
 
     /* Onboard WS2812B NeoPixel RGB LED: GPIO 48 */
     s_pin_registry[BOARD_PIN_RGB_LED].owner = PERIPH_ID_RGB_NEOPIXEL;

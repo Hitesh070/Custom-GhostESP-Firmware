@@ -3,9 +3,12 @@
 #include "modules/rogue_detector.h"
 #include "modules/deauth_monitor.h"
 #include "modules/profile_manager.h"
+#include "modules/temp_monitor.h"
+#include "scans/wifi/ap_scan.h"
 #include "hardware/board_config.h"
 #include "core/serial_manager.h"
 #include "core/glog.h"
+#include "esp_app_desc.h"
 #include "esp_log.h"
 #include "esp_random.h"
 #include "freertos/FreeRTOS.h"
@@ -112,7 +115,7 @@ void ghost_render_matrix_rain(uint32_t duration_frames) {
     if (duration_frames == 0) duration_frames = 20;
     if (duration_frames > 60) duration_frames = 60;
 
-    glog("\n[+] Entering Matrix Terminal Mode (Press CTRL+C or any key to exit)...\n\n");
+    glog("\n[+] Matrix Terminal Mode (%lu frames)...\n\n", (unsigned long)duration_frames);
     static const char glyphs[] = "0123456789ABCDEF!@#$%^&*+-<>~";
     const int glyph_count = sizeof(glyphs) - 1;
 
@@ -134,6 +137,15 @@ void ghost_render_matrix_rain(uint32_t duration_frames) {
 }
 
 void ghost_render_radar(void) {
+    uint16_t ap_cnt = 0;
+    wifi_ap_record_t *ap_list = NULL;
+    ap_scan_get_results(&ap_cnt, &ap_list);
+    uint32_t threats = rogue_detector_get_threat_count();
+    uint32_t deauths = deauth_monitor_get_total_count();
+    uint32_t rate = deauth_monitor_get_rate();
+    temp_monitor_status_t ts = {0};
+    temp_monitor_get_status(&ts);
+
     glog("\n=================================================================================\n");
     glog("                     GHOSTESP AIRSPACE RADAR DISPLAY                             \n");
     glog("=================================================================================\n");
@@ -147,7 +159,14 @@ void ghost_render_radar(void) {
     glog("                    '.    |    .'                     \n");
     glog("                      '-.....-'                      \n");
     glog("=================================================================================\n");
-    glog(" Live Radar Summary: Airspace clear of malicious transmitters.\n\n");
+    glog(" Live Radar Telemetry: Scanned APs=%u | Rogue Alerts=%lu | Deauth Total=%lu (%lu fps)\n",
+         (unsigned)ap_cnt, (unsigned long)threats, (unsigned long)deauths, (unsigned long)rate);
+    if (ts.valid) {
+        glog(" Silicon Die Temp    : %.1f C (Min %.1f / Max %.1f C)\n\n",
+             ts.current_c, ts.min_c, ts.max_c);
+    } else {
+        glog(" Silicon Die Temp    : Sampling pending\n\n");
+    }
 }
 
 void ghost_handle_developer_command(int argc, char **argv) {
@@ -155,12 +174,12 @@ void ghost_handle_developer_command(int argc, char **argv) {
         glog("\nGhostESP Secret Developer Console Commands:\n\n");
         glog("  ghost status       - Show high-level system & companion state\n");
         glog("  ghost matrix       - Run animated Matrix digital rain terminal\n");
-        glog("  ghost radar        - View ASCII radar sweep of local airspace\n");
+        glog("  ghost radar        - View live radar telemetry & threat counters\n");
         glog("  ghost companion    - Interact with the Ghost Companion mascot\n");
         glog("  ghost selftest     - Run full automated hardware self-test\n");
         glog("  ghost achievements - List unlocked milestones & achievements\n");
-        glog("  ghost easteregg    - Trigger rare visual glitch/easter egg effect\n");
-        glog("  ghost version      - Display detailed God Mode V3 architecture info\n\n");
+        glog("  ghost easteregg    - Trigger visual glitch & print ELF build hash\n");
+        glog("  ghost version      - Display detailed God Mode V4 architecture info\n\n");
         return;
     }
 
@@ -178,12 +197,16 @@ void ghost_handle_developer_command(int argc, char **argv) {
     } else if (strcmp(argv[1], "achievements") == 0) {
         ghost_dump_achievements();
     } else if (strcmp(argv[1], "easteregg") == 0) {
+        const esp_app_desc_t *desc = esp_app_get_description();
         glog("\n[!] GLITCH SEQUENCE ACTIVATED: System reality distortion wave passing...\n");
         ghost_render_matrix_rain(15);
-        glog("[*] Firmware integrity verified: 0 bytes altered.\n\n");
+        glog("[*] Running Image: %s %s (%s %s) ELF-SHA256=%02x%02x%02x%02x%02x%02x%02x%02x\n\n",
+             desc->project_name, desc->version, desc->date, desc->time,
+             desc->app_elf_sha256[0], desc->app_elf_sha256[1], desc->app_elf_sha256[2], desc->app_elf_sha256[3],
+             desc->app_elf_sha256[4], desc->app_elf_sha256[5], desc->app_elf_sha256[6], desc->app_elf_sha256[7]);
     } else if (strcmp(argv[1], "version") == 0) {
         glog("\n=================================================================================\n");
-        glog(" Firmware: GhostESP Revival God Mode V3 (Enterprise Security Architecture)       \n");
+        glog(" Firmware: GhostESP Revival God Mode V4 (Verified Security Architecture)         \n");
         glog(" Target:   7Semi ESP32-S3-WROOM-1-N16R8 (16MB Flash, 8MB Octal PSRAM)            \n");
         glog(" Buses:    I2C0 (8/9), SPI2 RF (10-14), SPI3 LCD (5-7,15,16), UART1 (43/44)      \n");
         glog(" Security: Passive Monitoring Default, Hardware Locks, Non-Destructive           \n");

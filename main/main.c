@@ -14,6 +14,7 @@
 #include "modules/deauth_monitor.h"
 #include "modules/profile_manager.h"
 #include "modules/ghost_eastereggs.h"
+#include "modules/temp_monitor.h"
 #include "core/memory_debug.h"
 #include "managers/ap_manager.h"
 #include "managers/display_manager.h"
@@ -736,6 +737,7 @@ void app_main(void) {
     deauth_monitor_init();
     profile_manager_init();
     ghost_eastereggs_init();
+    temp_monitor_init();
     MEASURE_INIT_RAM("Ghostchi Mood init", ghostchi_mood_init());
     ghostchi_mood_record_event(GHOSTCHI_MOOD_EVENT_BOOT, 3);
 

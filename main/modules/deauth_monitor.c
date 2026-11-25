@@ -113,6 +113,9 @@ uint32_t deauth_monitor_get_total_count(void) {
 }
 
 uint32_t deauth_monitor_get_rate(void) {
+    if (s_current_rate > 0 && (get_time_ms() - s_window_start_ms) >= 2000U) {
+        return 0;
+    }
     return s_current_rate;
 }
 
@@ -166,17 +169,26 @@ void deauth_monitor_process_frame(const uint8_t *frame, uint16_t length, int8_t 
     s_history_head = (s_history_head + 1) % DEAUTH_HISTORY_MAX;
     if (s_history_count < DEAUTH_HISTORY_MAX) s_history_count++;
 
-    /* Rate-limited alert if burst detected */
+    bool emit_alert = false;
+    uint32_t alert_rate = 0;
+    uint8_t tx_snap[6] = {0}, rx_snap[6] = {0};
     if (s_current_rate >= DEAUTH_ALERT_THRESHOLD && (now - s_last_alert_ms > 2000)) {
         s_last_alert_ms = now;
-        glog("\n[!] DEAUTH STORM DETECTED: %lu frames/sec!\n    Transmitter: %02X:%02X:%02X:%02X:%02X:%02X -> Target: %02X:%02X:%02X:%02X:%02X:%02X (Reason %d: %s)\n",
-             (unsigned long)s_current_rate,
-             transmitter[0], transmitter[1], transmitter[2], transmitter[3], transmitter[4], transmitter[5],
-             receiver[0], receiver[1], receiver[2], receiver[3], receiver[4], receiver[5],
-             reason, reason_to_str(reason));
+        emit_alert = true;
+        alert_rate = s_current_rate;
+        memcpy(tx_snap, transmitter, 6);
+        memcpy(rx_snap, receiver, 6);
     }
 
     xSemaphoreGive(s_mutex);
+
+    if (emit_alert) {
+        glog("\n[!] DEAUTH STORM DETECTED: %lu frames/sec!\n    Transmitter: %02X:%02X:%02X:%02X:%02X:%02X -> Target: %02X:%02X:%02X:%02X:%02X:%02X (Reason %d: %s)\n",
+             (unsigned long)alert_rate,
+             tx_snap[0], tx_snap[1], tx_snap[2], tx_snap[3], tx_snap[4], tx_snap[5],
+             rx_snap[0], rx_snap[1], rx_snap[2], rx_snap[3], rx_snap[4], rx_snap[5],
+             reason, reason_to_str(reason));
+    }
 }
 
 void deauth_monitor_dump_status(void) {
@@ -185,6 +197,9 @@ void deauth_monitor_dump_status(void) {
     if (xSemaphoreTake(s_mutex, pdMS_TO_TICKS(500)) != pdTRUE) {
         glog("Deauth monitor busy.\n");
         return;
+    }
+    if (s_current_rate > 0 && (get_time_ms() - s_window_start_ms) >= 2000U) {
+        s_current_rate = 0;
     }
 
     glog("\n=================================================================================\n");

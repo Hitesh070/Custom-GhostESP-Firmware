@@ -192,8 +192,12 @@ static void airtag_scanner_callback(struct ble_gap_event *event, size_t len) {
     memcpy(new_tag->addr.val, event->disc.addr.val, 6);
     new_tag->addr.type = event->disc.addr.type;
     new_tag->rssi = event->disc.rssi;
-    memcpy(new_tag->payload, payload, payload_len);
-    new_tag->payload_len = payload_len;
+    size_t copy_len = payload_len;
+    if (copy_len > sizeof(new_tag->payload)) {
+        copy_len = sizeof(new_tag->payload);
+    }
+    memcpy(new_tag->payload, payload, copy_len);
+    new_tag->payload_len = copy_len;
     new_tag->selected_for_spoofing = false;
     airtag_last_rssi_log[discovered_airtag_count] = xTaskGetTickCount();
 

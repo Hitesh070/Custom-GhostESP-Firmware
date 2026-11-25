@@ -207,8 +207,9 @@ bool wpa_extract_gtk_from_m3(const uint8_t *eapol_m3_frame,
 
     uint16_t key_data_len = (eapol[7] << 8) | eapol[8];
     int hdr_size = 28;
+    const int key_data_offset = hdr_size + 80;
 
-    if (key_data_len == 0 || (frame_len - hdr_size) < key_data_len) {
+    if (key_data_len == 0 || frame_len <= key_data_offset || (frame_len - key_data_offset) < key_data_len) {
         glog("M3 key data length invalid\n");
         return false;
     }
@@ -217,13 +218,8 @@ bool wpa_extract_gtk_from_m3(const uint8_t *eapol_m3_frame,
     if (!decrypted) return false;
 
     int decrypted_len = 0;
-    bool ok = wpa_decrypt_gtk_key_data(eapol + hdr_size + 80, key_data_len,
+    bool ok = wpa_decrypt_gtk_key_data(eapol + key_data_offset, key_data_len,
                                         kek, decrypted, &decrypted_len);
-    if (!ok) {
-        const uint8_t *raw_kd = eapol + hdr_size + 80;
-        ok = wpa_decrypt_gtk_key_data(raw_kd, key_data_len,
-                                       kek, decrypted, &decrypted_len);
-    }
 
     if (!ok) {
         free(decrypted);
@@ -278,7 +274,7 @@ static void ccm_nonce(const uint8_t *key, int key_len,
     uint8_t nonce[13];
     nonce[0] = flags;
     memcpy(nonce + 1, pn, 6);
-    memset(nonce + 7, 0, 5);
+    memset(nonce + 7, 0, 6);
 
     uint8_t b0[16];
     memset(b0, 0, 16);
@@ -294,7 +290,6 @@ static void ccm_nonce(const uint8_t *key, int key_len,
     #define AES_ENCRYPT 1
     mbedtls_aes_crypt_ecb(&aes, AES_ENCRYPT, b0, mic_mask);
 
-    int auth_blocks = (aad_len + 16 - 1) / 16;
     uint8_t block[16];
     memset(block, 0, 16);
     block[0] = (aad_len >> 8) & 0xFF;
@@ -304,9 +299,10 @@ static void ccm_nonce(const uint8_t *key, int key_len,
     for (int i = 0; i < 16; i++) mic_mask[i] ^= block[i];
     mbedtls_aes_crypt_ecb(&aes, AES_ENCRYPT, mic_mask, mic_mask);
 
+    int aad_rem = aad_len - copy1;
+    int auth_blocks = (aad_rem > 0) ? ((aad_rem + 15) / 16) : 0;
     for (int b = 0; b < auth_blocks; b++) {
-        int off = b * 16;
-        if (b == 0) off = copy1;
+        int off = copy1 + b * 16;
         int rem = aad_len - off;
         if (rem > 16) rem = 16;
         memset(block, 0, 16);
@@ -423,6 +419,7 @@ bool wpa_ccmp_encrypt(const uint8_t *gtk,
 }
 
 int wpa_parse_eapol_m1(const uint8_t *frame, int len, uint8_t *anonce_out) {
+    if (!frame || len < 8) return -1;
     const uint8_t *llc = frame;
     while (llc < frame + len - 8) {
         if (llc[0] == 0xAA && llc[1] == 0xAA && llc[2] == 0x03 &&
@@ -435,7 +432,7 @@ int wpa_parse_eapol_m1(const uint8_t *frame, int len, uint8_t *anonce_out) {
 
     const uint8_t *eapol = llc + 8;
     int eapol_remaining = len - (int)(eapol - frame);
-    if (eapol_remaining < 17) return -1;
+    if (eapol_remaining < 41) return -1;
 
     uint8_t key_desc = eapol[4];
     if (key_desc != 2) return -1;
@@ -455,6 +452,7 @@ int wpa_parse_eapol_m3(const uint8_t *frame, int len,
                        uint8_t *anonce_out,
                        const uint8_t **key_data_out,
                        int *key_data_len_out) {
+    if (!frame || len < 8) return -1;
     const uint8_t *llc = frame;
     while (llc < frame + len - 8) {
         if (llc[0] == 0xAA && llc[1] == 0xAA && llc[2] == 0x03 &&
@@ -467,7 +465,7 @@ int wpa_parse_eapol_m3(const uint8_t *frame, int len,
 
     const uint8_t *eapol = llc + 8;
     int eapol_remaining = len - (int)(eapol - frame);
-    if (eapol_remaining < 17) return -1;
+    if (eapol_remaining < 41) return -1;
 
     uint8_t key_desc = eapol[4];
     if (key_desc != 2) return -1;
@@ -482,6 +480,7 @@ int wpa_parse_eapol_m3(const uint8_t *frame, int len,
     if (anonce_out) memcpy(anonce_out, eapol + 9, 32);
 
     uint16_t kd_len = (eapol[7] << 8) | eapol[8];
+    if (eapol_remaining < 108 || (eapol_remaining - 108) < kd_len) return -1;
     if (key_data_out) *key_data_out = eapol + 28 + 80;
     if (key_data_len_out) *key_data_len_out = kd_len;
 

@@ -8,6 +8,12 @@
 #include "managers/ghostchi_manager.h"
 #include "managers/sd_card_manager.h"
 #include "managers/settings_manager.h"
+#ifdef CONFIG_USE_USB_KEYBOARD
+#include "managers/usb_keyboard_manager.h"
+#endif
+#ifdef CONFIG_HAS_USB_MSC_SD
+#include "managers/usb_msc_manager.h"
+#endif
 #include "core/glog.h"
 #include "core/esp_comm_manager.h"
 #include "core/serial_manager.h"
@@ -767,6 +773,19 @@ static esp_err_t badusb_wait_for_mount(void) {
 
 esp_err_t badusb_manager_start(void) {
     if (s_active) return ESP_OK;
+
+#ifdef CONFIG_USE_USB_KEYBOARD
+    if (usb_keyboard_manager_is_host_mode()) {
+        glog("BadUSB: disable USB host keyboard mode first\n");
+        return ESP_ERR_INVALID_STATE;
+    }
+#endif
+#ifdef CONFIG_HAS_USB_MSC_SD
+    if (usb_msc_is_active()) {
+        glog("BadUSB: stop USB SD passthrough first\n");
+        return ESP_ERR_INVALID_STATE;
+    }
+#endif
 
     badusb_manager_apply_settings();
     esp_err_t ret = badusb_install_driver();

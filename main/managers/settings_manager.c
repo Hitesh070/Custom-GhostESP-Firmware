@@ -270,6 +270,10 @@ void settings_set_defaults(FSettings *settings) {
 #ifdef CONFIG_IDF_TARGET_ESP32
     settings->esp_comm_tx_pin = 17;
     settings->esp_comm_rx_pin = 16;
+#elif defined(CONFIG_IDF_TARGET_ESP32S3)
+    /* 7Semi ESP32-S3: Use UART2 (TX=17, RX=18) so Display SPI3 (DC=6, RST=7) is never hijacked */
+    settings->esp_comm_tx_pin = 17;
+    settings->esp_comm_rx_pin = 18;
 #else
     settings->esp_comm_tx_pin = 6;
     settings->esp_comm_rx_pin = 7;
@@ -753,6 +757,8 @@ void settings_load(FSettings *settings) {
   } else {
 #ifdef CONFIG_IDF_TARGET_ESP32
     settings->esp_comm_tx_pin = 17;
+#elif defined(CONFIG_IDF_TARGET_ESP32S3)
+    settings->esp_comm_tx_pin = 17;
 #else
     settings->esp_comm_tx_pin = 6;
 #endif
@@ -764,10 +770,21 @@ void settings_load(FSettings *settings) {
   } else {
 #ifdef CONFIG_IDF_TARGET_ESP32
     settings->esp_comm_rx_pin = 16;
+#elif defined(CONFIG_IDF_TARGET_ESP32S3)
+    settings->esp_comm_rx_pin = 18;
 #else
     settings->esp_comm_rx_pin = 7;
 #endif
   }
+
+#if defined(CONFIG_IDF_TARGET_ESP32S3) && defined(CONFIG_LV_DISP_PIN_DC) && defined(CONFIG_LV_DISP_PIN_RST)
+  if ((settings->esp_comm_tx_pin == CONFIG_LV_DISP_PIN_DC && settings->esp_comm_rx_pin == CONFIG_LV_DISP_PIN_RST) ||
+      settings->esp_comm_tx_pin == 19 || settings->esp_comm_rx_pin == 19 ||
+      settings->esp_comm_tx_pin == 20 || settings->esp_comm_rx_pin == 20) {
+    settings->esp_comm_tx_pin = 17;
+    settings->esp_comm_rx_pin = 18;
+  }
+#endif
 
   if (settings_should_use_noop_dualcomm_pins()) {
     settings->esp_comm_tx_pin = -1;

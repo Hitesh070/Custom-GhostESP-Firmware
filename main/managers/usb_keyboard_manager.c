@@ -3,6 +3,12 @@
 #include "core/esp_comm_manager.h"
 #include "managers/display_manager.h"
 #include "managers/views/terminal_screen.h"
+#ifdef CONFIG_HAS_BADUSB
+#include "managers/badusb_manager.h"
+#endif
+#ifdef CONFIG_HAS_USB_MSC_SD
+#include "managers/usb_msc_manager.h"
+#endif
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -119,6 +125,7 @@ typedef struct {
 static TaskHandle_t s_usb_host_task = NULL;
 static bool s_host_mode_active = false;
 static volatile bool s_usb_host_ready = false;
+static volatile bool s_usb_host_stop_req = false;
 
 #if defined(CONFIG_BANSHEE_LITE_S3)
 static void usb_kbd_set_select(bool active)
@@ -299,11 +306,14 @@ static void usb_kbd_host_task(void *arg) {
     s_usb_host_ready = true;
     TERMINAL_VIEW_ADD_TEXT("USB host ready\n");
 
-    for (;;) {
+    while (!s_usb_host_stop_req) {
         uint32_t flags = 0;
-        usb_host_lib_handle_events(portMAX_DELAY, &flags);
+        usb_host_lib_handle_events(pdMS_TO_TICKS(100), &flags);
         (void)flags;
     }
+    s_usb_host_ready = false;
+    s_usb_host_task = NULL;
+    vTaskDelete(NULL);
 }
 
 void usb_keyboard_manager_init(void) {
@@ -311,6 +321,18 @@ void usb_keyboard_manager_init(void) {
         TERMINAL_VIEW_ADD_TEXT("USB Host already active\n");
         return;
     }
+#ifdef CONFIG_HAS_BADUSB
+    if (badusb_manager_is_active()) {
+        TERMINAL_VIEW_ADD_TEXT("Stop BadUSB before enabling USB Host keyboard\n");
+        return;
+    }
+#endif
+#ifdef CONFIG_HAS_USB_MSC_SD
+    if (usb_msc_is_active()) {
+        TERMINAL_VIEW_ADD_TEXT("Stop USB SD passthrough before enabling USB Host keyboard\n");
+        return;
+    }
+#endif
 
 #if defined(CONFIG_BANSHEE_LITE_S3)
     usb_kbd_set_select(true);
@@ -318,6 +340,7 @@ void usb_keyboard_manager_init(void) {
 
     if (!s_usb_host_task) {
         s_usb_host_ready = false;
+        s_usb_host_stop_req = false;
         if (xTaskCreatePinnedToCore(usb_kbd_host_task, "usb_events", 6144, NULL, 2, &s_usb_host_task, 0) != pdPASS) {
             TERMINAL_VIEW_ADD_TEXT("USB host task failed\n");
             s_usb_host_task = NULL;
@@ -364,16 +387,25 @@ void usb_keyboard_manager_init(void) {
 
 static void usb_kbd_stop(void) {
     if (!s_host_mode_active) return;
-    
+
     hid_host_uninstall();
-    
-    if (s_usb_host_task) {
-        usb_host_uninstall();
-        vTaskDelete(s_usb_host_task);
-        s_usb_host_task = NULL;
+    s_usb_host_stop_req = true;
+
+    int wait_ms = 0;
+    while (s_usb_host_task && wait_ms < 500) {
+        vTaskDelay(pdMS_TO_TICKS(20));
+        wait_ms += 20;
     }
-    
+
+    if (s_usb_host_task) {
+        TaskHandle_t h = s_usb_host_task;
+        s_usb_host_task = NULL;
+        vTaskDelete(h);
+    }
+    usb_host_uninstall();
+
     s_usb_host_ready = false;
+    s_usb_host_stop_req = false;
     s_host_mode_active = false;
 #if defined(CONFIG_BANSHEE_LITE_S3)
     usb_kbd_set_select(false);

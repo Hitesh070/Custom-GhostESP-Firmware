@@ -305,7 +305,11 @@ esp_err_t beacon_spam_broadcast_karma(const char *ssid) {
     wifi_second_chan_t second_channel;
     esp_wifi_get_channel(&primary_channel, &second_channel);
 
-    uint8_t ssid_len = strlen(ssid);
+    size_t raw_ssid_len = strlen(ssid);
+    if (raw_ssid_len > BEACON_SSID_MAX_LEN) {
+        raw_ssid_len = BEACON_SSID_MAX_LEN;
+    }
+    uint8_t ssid_len = (uint8_t)raw_ssid_len;
     packet[37] = ssid_len;
     memcpy(&packet[38], ssid, ssid_len);
 

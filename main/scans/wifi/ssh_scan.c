@@ -88,11 +88,13 @@ static bool scan_ssh_port(const char *target_ip, uint16_t port, scan_file_t *sf)
     // Port is open - try to grab banner
     ESP_LOGI(TAG, "Port %d is OPEN on %s", port, target_ip);
     
-    int bytes = tcp_recv_with_timeout_cancel(sock, banner, sizeof(banner), SSH_BANNER_TIMEOUT_MS,
+    int bytes = tcp_recv_with_timeout_cancel(sock, banner, sizeof(banner) - 1, SSH_BANNER_TIMEOUT_MS,
                                              &g_network_scan_cancel);
     tcp_close_socket(&sock);
     
     if (bytes > 0) {
+        if ((size_t)bytes >= sizeof(banner)) bytes = sizeof(banner) - 1;
+        banner[bytes] = '\0';
         clean_banner_string(banner);
         ESP_LOGI(TAG, "SSH banner from %s:%d: %s", target_ip, port, banner);
         

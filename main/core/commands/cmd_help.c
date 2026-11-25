@@ -19,7 +19,7 @@ void handle_help(int argc, char **argv) {
 
     // List of all categories to print in order
     const char *all_categories[] = {
-        "wifi", "ble", "chameleon", "comm", "sd", "led", "gps", "shell", "misc", "portal", "printer", "cast", "gadgets", "capture", "beacon", "tests", "attack"
+        "wifi", "ble", "chameleon", "comm", "sd", "led", "gps", "shell", "misc", "portal", "printer", "cast", "gadgets", "capture", "beacon", "tests", "godmode"
 #ifdef CONFIG_HAS_LORA
         , "lora"
 #endif
@@ -480,8 +480,12 @@ void handle_help(int argc, char **argv) {
         glog("loglevel\n");
         glog("    Description: View or change the global ESP-IDF log level.\n");
         glog("    Usage: loglevel [none|error|warn|info|debug|verbose]\n\n");
+        glog("statusidle\n");
         glog("    Description: View or change the status display idle animation (status OLED only).\n");
         glog("    Usage: statusidle [list|set <life|ghost|starfield|hud|matrix|ghosts|spiral|leaves|bouncing|0|1|2|3|4|5|6|7|8>]\n\n");
+        glog("temp\n");
+        glog("    Description: Inspect ESP32-S3 on-chip thermal sensor telemetry, history & stats.\n");
+        glog("    Usage: temp [status|c|f|interval <ms>|history|reset|json]\n\n");
         return;
     }
 #ifdef CONFIG_HAS_LORA
@@ -610,31 +614,31 @@ void handle_help(int argc, char **argv) {
     if (strcmp(category, "cast") == 0) {
         glog("\nYouTube Cast Commands:\n\n");
         glog("dialconnect\n");
-        glog("    Description: Cast a Random Youtube Video on all Smart TV's on your LAN (Requires You to Run Connect First)\n");
-        glog("    Usage: dialconnect\n\n");
-        glog("dialconnect\n");
-        glog("    Cast a random YouTube video to all smart TVs on your LAN.\n");
+        glog("    Description: Cast a random YouTube video to all smart TVs on your LAN (Requires Connect First).\n");
         glog("    Usage: dialconnect\n\n");
         return;
     }
 
     if (strcmp(category, "gadgets") == 0) {
+        glog("\nGadgets & USB HID Commands:\n\n");
         glog("wol <MAC|IP> [broadcast IP]\n");
         glog("govee scan | govee <IP> on|off|brightness N|color RRGGBB\n");
+        glog("badusb <run <file|builtin> --confirm|list|stop|exec <size> --confirm|type|keysend|...>\n");
+        glog("usbkbd <on|off|status>\n\n");
         return;
     }
 
     if (strcmp(category, "capture") == 0) {
         glog("\nCapture Commands:\n\n");
         glog("capture\n");
-        glog("    Description: Start a WiFi Capture (Requires SD Card or Flipper)\n");
+        glog("    Description: Start a Wi-Fi / BLE / Wireshark Packet Capture\n");
         glog("    Usage: capture [OPTION] [-channel <n>|-c <n>]\n");
         glog("    Arguments:\n");
         glog("        -probe     : Start Capturing Probe Packets\n");
         glog("        -beacon    : Start Capturing Beacon Packets\n");
         glog("        -deauth    : Start Capturing Deauth Packets\n");
         glog("        -raw       : Start Capturing Raw Packets\n");
-        glog("        -wps       : Start Capturing WPS Packets and there Auth Type\n");
+        glog("        -wps       : Start Capturing WPS Packets and their Auth Type\n");
         glog("        -pwn       : Start Capturing Pwnagotchi Packets\n");
         glog("        -eapol     : Start Capturing EAPOL (handshake) Packets\n");
         glog("        -list      : Browse saved PCAPs with +/- hc22000 markers\n");
@@ -647,27 +651,13 @@ void handle_help(int argc, char **argv) {
 #if !defined(CONFIG_IDF_TARGET_ESP32S2) && !defined(GHOSTESP_NO_NATIVE_BLE)
         glog("        -ble       : Start BLE packet capture\n");
         glog("        -skimmer   : Start skimmer (BLE) detection\n");
-        #endif
-        #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
+#endif
+#if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
         glog("        -802154    : Start Capturing IEEE 802.15.4 Packets [C5/C6]\n");
-        glog("                    Usage: capture -802154 [ch<n>|-channel <n>]\n");
+        glog("                    Usage: capture -80215.4 [ch<n>|-channel <n>]\n");
         glog("                    -channel <n>: Lock to 802.15.4 channel (11-26)\n");
-        #endif
+#endif
         glog("        -stop      : Stops the active capture\n\n");
-        glog("capture\n");
-        glog("    Start a WiFi packet capture.\n");
-        glog("    Usage: capture [OPTION] [-channel <n>|-c <n>]\n");
-        glog("    -channel <n>: Lock the radio to channel <n> during the capture.\n");
-        glog("                  Accepted by: -probe, -deauth, -beacon, -raw, -eapol, -pwn, -wps, -wireshark");
-        #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
-        glog(", -802154 (11-26 only)");
-        #endif
-        glog(".\n");
-        #if defined(CONFIG_IDF_TARGET_ESP32C5) || defined(CONFIG_IDF_TARGET_ESP32C6)
-        glog("    Options: -probe, -beacon, -deauth, -raw, -wps, -pwn, -eapol, -list, -export, -wireshark, -wiresharkble, -802154, -stop\n\n");
-        #else
-        glog("    Options: -probe, -beacon, -deauth, -raw, -wps, -pwn, -eapol, -list, -export, -wireshark, -wiresharkble, -stop\n\n");
-        #endif
         return;
     }
 
@@ -693,6 +683,25 @@ void handle_help(int argc, char **argv) {
         glog("    Usage: saeflood <password> (requires selected WPA3 AP)\n\n");
         glog("stopsaeflood\n    Stop SAE flood test.\n    Usage: stopsaeflood\n\n");
         glog("saefloodhelp\n    Show detailed SAE flood test help.\n    Usage: saefloodhelp\n\n");
+        return;
+    }
+
+    if (strcmp(category, "godmode") == 0) {
+        glog("\nGod Mode V4 Research & Telemetry Commands:\n\n");
+        glog("temp [status|c|f|interval <ms>|history|reset|json]\n");
+        glog("    ESP32-S3 on-chip temperature monitor, periodic sampler & history.\n\n");
+        glog("selftest\n");
+        glog("    Run hardware bus & memory self-test (SRAM, PSRAM, Temp, I2C, SPI2).\n\n");
+        glog("roguedetect [start|stop|status|clear]\n");
+        glog("    Passive Rogue AP, Evil Twin & Security Downgrade monitor.\n\n");
+        glog("deauthmon [start|stop|status|clear]\n");
+        glog("    Passive 802.11 Deauthentication & Disassociation rate monitor.\n\n");
+        glog("nrf24lab [diag|regs|sweep <samples>|benchmark <cycles>]\n");
+        glog("    NRF24L01+PA+LNA register inspector & 126-ch SPI2 spectrum sweep.\n\n");
+        glog("profile [list|apply <id>]\n");
+        glog("    View or apply research configuration presets.\n\n");
+        glog("ghost [status|matrix|radar|companion|selftest|achievements|easteregg|version]\n");
+        glog("    Developer telemetry, live radar summary, achievements & build info.\n\n");
         return;
     }
     
@@ -921,6 +930,7 @@ void handle_help(int argc, char **argv) {
     glog("  help capture   - Wi-Fi packet capture commands\n");
     glog("  help beacon    - Beacon spam commands\n");
     glog("  help tests   - Test/flood commands\n");
+    glog("  help godmode - God Mode V4 telemetry, thermal, rogue/deauth, NRF24 & profile commands\n");
 #ifdef CONFIG_HAS_LORA
     glog("  help lora      - LoRa / Meshtastic / mesh commands\n");
 #endif
