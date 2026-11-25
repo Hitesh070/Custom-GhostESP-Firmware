@@ -159,6 +159,7 @@ class GhostCommandCenterWindow(QMainWindow):
         self.sweep_bins: Dict[int, int] = {}
         self.cmd_history: List[str] = []
         self.nav_buttons: List[QPushButton] = []
+        self._last_cmd: str = ""
 
         self.temp_poll_timer = QTimer(self)
         self.temp_poll_timer.timeout.connect(self._poll_temperature)
@@ -340,12 +341,13 @@ class GhostCommandCenterWindow(QMainWindow):
             ("chipinfo", "chipinfo"),
             ("version", "version"),
             ("uuid", "uuid"),
-            ("macaddr", "macaddr"),
+            ("macaddr", "macaddr all"),
             ("uptime", "uptime"),
-            ("Toggle DTR/RTS Low", "__dtr_low"),
+            ("Hardware Reset (DTR/RTS Low)", "__dtr_low"),
         ]:
             b = QPushButton(label)
             if cmd == "__dtr_low":
+                b.setToolTip("Deasserts DTR/RTS lines (triggers USB_UART_CHIP_RESET on ESP32-S3)")
                 b.clicked.connect(lambda: self.serial.set_control_lines(False, False))
             else:
                 b.clicked.connect(lambda _=False, c=cmd: self._send_cmd(c))
@@ -469,7 +471,14 @@ class GhostCommandCenterWindow(QMainWindow):
         self.wifi_table.setHorizontalHeaderLabels(["BSSID", "SSID", "Ch", "RSSI", "Security", "Vendor", "Threat"])
         self.wifi_table.setSortingEnabled(True)
         self.wifi_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        cl.addWidget(self.wifi_table)
+        cl.addWidget(self.wifi_table, 2)
+
+        self.wifi_report_log = QPlainTextEdit()
+        self.wifi_report_log.setReadOnly(True)
+        self.wifi_report_log.setMaximumHeight(170)
+        self.wifi_report_log.setMaximumBlockCount(500)
+        self.wifi_report_log.setPlaceholderText("WPA3 Check, Channel Congestion, and AP scan reports appear here...")
+        cl.addWidget(self.wifi_report_log, 1)
         lay.addWidget(card)
         return w
 
@@ -514,6 +523,8 @@ class GhostCommandCenterWindow(QMainWindow):
         for label, cmd, obj in [
             ("BLE Detect (bledetect)", "bledetect", "PrimaryBtn"),
             ("BLE Scan -t", "blescan -t", ""),
+            ("BLE Scan -adv", "blescan -adv", ""),
+            ("List Adv", "listadv", ""),
             ("Stop BLE Scan", "stopscan", "DangerBtn"),
             ("AirTags", "listairtags", ""),
             ("Flippers", "listflippers", ""),
@@ -536,7 +547,14 @@ class GhostCommandCenterWindow(QMainWindow):
         self.ble_table.setHorizontalHeaderLabels(["MAC", "Name", "RSSI (dBm)", "Type", "Raw Details"])
         self.ble_table.setSortingEnabled(True)
         self.ble_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        cl.addWidget(self.ble_table)
+        cl.addWidget(self.ble_table, 2)
+
+        self.ble_log = QPlainTextEdit()
+        self.ble_log.setReadOnly(True)
+        self.ble_log.setMaximumHeight(150)
+        self.ble_log.setMaximumBlockCount(500)
+        self.ble_log.setPlaceholderText("BLE scanner, AirTag, Flipper, and advertiser output appears here...")
+        cl.addWidget(self.ble_log, 1)
         lay.addWidget(card)
         return w
 
@@ -675,6 +693,14 @@ class GhostCommandCenterWindow(QMainWindow):
         lay = QVBoxLayout(w)
         lay.setContentsMargins(14, 14, 14, 14)
         card, cl = make_card("Research Profiles & System Settings")
+        info_lbl = QLabel(
+            "Profiles switch GhostESP between pre-tuned research modes (e.g. Combined starts passive Rogue + Deauth monitors; "
+            "Diagnostics stops active radios for bus self-tests)."
+        )
+        info_lbl.setWordWrap(True)
+        info_lbl.setStyleSheet(f"color: {PALETTE['text_secondary']}; font-size: 11px;")
+        cl.addWidget(info_lbl)
+
         row = QHBoxLayout()
         b_list = QPushButton("Refresh Profiles")
         b_list.setObjectName("PrimaryBtn")
@@ -682,14 +708,21 @@ class GhostCommandCenterWindow(QMainWindow):
         row.addWidget(b_list)
         for pid, pname in [(0, "Combined"), (1, "WiFi-Research"), (2, "BLE-Research"), (3, "NRF24-Lab"), (6, "Diagnostics")]:
             bp = QPushButton(f"Apply {pid}: {pname}")
-            bp.clicked.connect(lambda _=False, i=pid: self._send_cmd(f"profile apply {i}"))
+            bp.clicked.connect(lambda _=False, i=pid: self._apply_profile(i))
             row.addWidget(bp)
         cl.addLayout(row)
 
         self.profile_table = QTableWidget(0, 4)
         self.profile_table.setHorizontalHeaderLabels(["ID", "Profile Name", "Active", "Description"])
         self.profile_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        cl.addWidget(self.profile_table)
+        cl.addWidget(self.profile_table, 2)
+
+        self.profile_log = QPlainTextEdit()
+        self.profile_log.setReadOnly(True)
+        self.profile_log.setMaximumHeight(140)
+        self.profile_log.setMaximumBlockCount(300)
+        self.profile_log.setPlaceholderText("Profile switch confirmations appear here...")
+        cl.addWidget(self.profile_log, 1)
         lay.addWidget(card)
         return w
 
@@ -825,6 +858,7 @@ class GhostCommandCenterWindow(QMainWindow):
             self.db.log_event("SYSTEM", "CONNECT", "INFO", message)
             self._append_timeline("SYSTEM", "INFO", message)
             QTimer.singleShot(250, lambda: self._send_cmd("temp json"))
+            QTimer.singleShot(650, lambda: self._send_cmd("profile list"))
         else:
             self.btn_connect.setText("CONNECT")
             self.btn_connect.setObjectName("PrimaryBtn")
@@ -843,9 +877,15 @@ class GhostCommandCenterWindow(QMainWindow):
         if not self.serial.running:
             QMessageBox.information(self, "Offline", f"Connect to ESP32-S3 before sending `{cmd}`.")
             return
+        self._last_cmd = cmd.strip().split()[0].lower()
         self.serial.send_command(cmd)
         self.console_out.appendPlainText(f"> {cmd}")
         self.cmd_history.append(cmd)
+
+    def _apply_profile(self, pid: int) -> None:
+        self._send_cmd(f"profile apply {pid}")
+        if self.serial.running:
+            QTimer.singleShot(500, lambda: self._send_cmd("profile list"))
 
     def _send_console_input(self) -> None:
         cmd = self.console_in.text().strip()
@@ -881,17 +921,32 @@ class GhostCommandCenterWindow(QMainWindow):
         self.console_out.appendPlainText(clean)
         if clean:
             self.dash_log.appendPlainText(clean)
-            if any(k in clean for k in ("IDF", "Chip", "ESP32", "MAC", "Uptime")):
+            cmd = self._last_cmd
+            if cmd in ("chipinfo", "version", "uuid", "macaddr", "uptime") or any(
+                k in clean for k in ("IDF", "Chip", "ESP32", "Git:", "App:", "up ", "Enabled Features:")
+            ):
                 self.serial_log.appendPlainText(clean)
-            if any(k in clean for k in ("Free", "Heap", "Task", "SPIFFS", "Core")):
+            if cmd in ("mem", "ps", "df", "coredump") or any(
+                k in clean for k in ("Free", "Heap", "Task", "task=", "/mnt", "df:", "Core", "Panic reason")
+            ):
                 self.health_log.appendPlainText(clean)
-            if any(k in clean for k in ("SD", "PCAP", "/mnt")):
+            if cmd in ("wpa3check", "congestion", "list", "scanap", "stopscan") or any(
+                k in clean for k in ("WPA3", "Channel Congestion", "PMF:", "Cipher:", "Summary:")
+            ):
+                self.wifi_report_log.appendPlainText(clean)
+            if cmd in ("bledetect", "blescan", "listairtags", "listflippers", "listadv", "listgatt") or any(
+                k in clean for k in ("AirTag", "Flipper", "BLE ", "Advertiser")
+            ):
+                self.ble_log.appendPlainText(clean)
+            if cmd == "profile" or "Profile" in clean:
+                self.profile_log.appendPlainText(clean)
+            if cmd in ("sd", "sd_config", "capture") or any(k in clean for k in ("SD", "PCAP", "/mnt")):
                 self.storage_log.appendPlainText(clean)
-            if any(k in clean for k in ("IR", "NFC", "GPS")):
+            if cmd in ("irpin", "nfctest", "gpsinfo") or any(k in clean for k in ("IR", "NFC", "GPS")):
                 self.rf_misc_log.appendPlainText(clean)
-            if any(k in clean for k in ("BadUSB", "USB", "usbkbd")):
+            if cmd in ("badusb", "usbkbd") or any(k in clean for k in ("BadUSB", "USB", "usbkbd")):
                 self.usb_log.appendPlainText(clean)
-            if any(k in clean for k in ("Usage:", "Commands:", "Description:")):
+            if cmd in ("help", "ghost") or any(k in clean for k in ("Usage:", "Commands:", "Description:")):
                 self.help_log.appendPlainText(clean)
 
         for ev in self.parser.feed_line(raw_line):
@@ -966,17 +1021,29 @@ class GhostCommandCenterWindow(QMainWindow):
             self.db.log_event(d["subsystem"], "EVENT", d["severity"], d["details"])
             self._append_timeline(d["subsystem"], d["severity"], d["details"])
 
+    @staticmethod
+    def _find_row_by_col0(tbl: QTableWidget, key: str) -> Optional[int]:
+        for r in range(tbl.rowCount()):
+            it = tbl.item(r, 0)
+            if it is not None and it.text() == key:
+                return r
+        return None
+
     def _upsert_wifi(self, d: dict) -> None:
         bssid = d["bssid"]
         vals = [bssid, d["ssid"], str(d["channel"]), str(d["rssi"]), d["security"], d["vendor"], d["threat"]]
-        if bssid in self.known_aps:
-            row = self.known_aps[bssid]
-        else:
-            row = self.wifi_table.rowCount()
-            self.wifi_table.insertRow(row)
+        was_sorting = self.wifi_table.isSortingEnabled()
+        self.wifi_table.setSortingEnabled(False)
+        try:
+            row = self._find_row_by_col0(self.wifi_table, bssid)
+            if row is None:
+                row = self.wifi_table.rowCount()
+                self.wifi_table.insertRow(row)
             self.known_aps[bssid] = row
-        for c, v in enumerate(vals):
-            self.wifi_table.setItem(row, c, QTableWidgetItem(v))
+            for c, v in enumerate(vals):
+                self.wifi_table.setItem(row, c, QTableWidgetItem(v))
+        finally:
+            self.wifi_table.setSortingEnabled(was_sorting)
         self.kpi_aps.setText(str(len(self.known_aps)))
         self.db.log_ap(
             bssid, d["ssid"], int(d["channel"]), int(d["rssi"]), d["security"],
@@ -986,14 +1053,18 @@ class GhostCommandCenterWindow(QMainWindow):
     def _upsert_ble(self, d: dict) -> None:
         mac = d["mac"]
         vals = [mac, d["name"], str(d["rssi"]), d["dev_type"], d["details"]]
-        if mac in self.known_bles:
-            row = self.known_bles[mac]
-        else:
-            row = self.ble_table.rowCount()
-            self.ble_table.insertRow(row)
+        was_sorting = self.ble_table.isSortingEnabled()
+        self.ble_table.setSortingEnabled(False)
+        try:
+            row = self._find_row_by_col0(self.ble_table, mac)
+            if row is None:
+                row = self.ble_table.rowCount()
+                self.ble_table.insertRow(row)
             self.known_bles[mac] = row
-        for c, v in enumerate(vals):
-            self.ble_table.setItem(row, c, QTableWidgetItem(v))
+            for c, v in enumerate(vals):
+                self.ble_table.setItem(row, c, QTableWidgetItem(v))
+        finally:
+            self.ble_table.setSortingEnabled(was_sorting)
         self.kpi_ble.setText(str(len(self.known_bles)))
         self.db.log_ble_device(mac, d["name"], int(d["rssi"]), d["dev_type"], d["details"])
 

@@ -163,6 +163,20 @@ def test_pyside6_window_offscreen_smoke(tmp_path, monkeypatch):
 
         win._on_serial_line_ui(" Thermal     | On-Chip Die Temp Sensor     | PASS        | 49.2 C (Verified)")
         assert win.selftest_table.rowCount() == 1
+
+        # ESP-IDF BLE_INIT log must NOT become a scanned BLE device with timestamp as RSSI
+        win._on_serial_line_ui("I (88734) BLE_INIT: Bluetooth MAC: 44:bd:8d:68:db:66")
+        assert win.ble_table.rowCount() == 1
+        # Bare `MAC:` lines from `blescan -t` must populate BLE Lab
+        win._on_serial_line_ui("MAC: 65:42:60:3c:15:61")
+        win._on_serial_line_ui("MAC: d6:3e:82:00:d7:56")
+        assert win.ble_table.rowCount() == 3
+
+        # Sorting-safe Wi-Fi upsert must not produce empty rows
+        win._upsert_wifi({"bssid": "ZZ:11:22:33:44:55", "ssid": "Z_Net", "channel": 6, "rssi": -60, "security": "WPA2", "vendor": "V1", "threat": "CLEAN"})
+        win._upsert_wifi({"bssid": "AA:11:22:33:44:55", "ssid": "A_Net", "channel": 1, "rssi": -70, "security": "OPEN", "vendor": "V2", "threat": "CLEAN"})
+        for r in range(win.wifi_table.rowCount()):
+            assert win.wifi_table.item(r, 1).text() in ("Z_Net", "A_Net")
     finally:
         win.close()
         qapp.processEvents()

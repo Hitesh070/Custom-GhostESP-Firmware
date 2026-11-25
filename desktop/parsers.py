@@ -27,6 +27,7 @@ class GhostTelemetryParser:
 
     def __init__(self) -> None:
         self._current_ap: Optional[Dict[str, Any]] = None
+        self._current_ble: Optional[Dict[str, Any]] = None
         self._ap_block_idx = 0
         self._in_ble_table = False
 
@@ -39,6 +40,15 @@ class GhostTelemetryParser:
         self._current_ap = None
         return None
 
+    def flush_pending_ble(self) -> Optional[ParsedEvent]:
+        """Flush buffered multi-line BLE entry (`bledetect` / `listadv`)."""
+        if self._current_ble and self._current_ble.get("mac"):
+            ble = dict(self._current_ble)
+            self._current_ble = None
+            return ParsedEvent("ble_device", ble)
+        self._current_ble = None
+        return None
+
     def feed_line(self, raw_line: str) -> List[ParsedEvent]:
         """Parse one incoming serial line and emit 0..N structured events."""
         clean = strip_ansi(raw_line)
@@ -46,11 +56,14 @@ class GhostTelemetryParser:
         if not clean:
             return events
 
-        # Flush pending AP if we hit the prompt or an unrelated section banner
+        # Flush pending AP/BLE blocks if we hit the prompt or an unrelated section banner
         if clean.startswith("ghost>") or clean.startswith("ghost >") or clean.startswith("==="):
             flushed = self.flush_pending_ap()
             if flushed:
                 events.append(flushed)
+            flushed_ble = self.flush_pending_ble()
+            if flushed_ble:
+                events.append(flushed_ble)
 
         # 1. Structured [TEMP_JSON] telemetry
         if "[TEMP_JSON]" in clean:
@@ -209,11 +222,59 @@ class GhostTelemetryParser:
             }))
             return events
 
-        # 10. BLE device discoveries (`bledetect`, `blescan`, `listairtags`, `listflippers`)
+        # 10. Multi-line & single-line BLE device discoveries (`bledetect`, `blescan`, `listadv`, `listairtags`, `listflippers`)
+        if re.match(r"^[IWEVD]\s*\(\d+\)\s*(?:BLE_INIT|BLE_MANAGER|NimBLE|wifi|ap_manager):", clean):
+            return events
+
+        m_ble_hdr = re.match(r"^\[\d+\]\s+(?:(BLE Advertiser)|(.+?)\s+found)\s*$", clean)
+        if m_ble_hdr:
+            flushed_ble = self.flush_pending_ble()
+            if flushed_ble:
+                events.append(flushed_ble)
+            dtype = "BLE Advertiser" if m_ble_hdr.group(1) else m_ble_hdr.group(2).strip()
+            self._current_ble = {
+                "mac": "",
+                "name": dtype,
+                "rssi": -90,
+                "dev_type": dtype,
+                "details": clean,
+            }
+            return events
+
+        if self._current_ble is not None:
+            m_bmac = re.match(r"^MAC:\s*([0-9A-Fa-f:]{17})", clean)
+            if m_bmac:
+                self._current_ble["mac"] = m_bmac.group(1).upper()
+                return events
+            m_brssi = re.search(r"RSSI:\s*(-?\d+)\s*dBm", clean)
+            if m_brssi:
+                self._current_ble["rssi"] = int(m_brssi.group(1))
+                return events
+            m_bname = re.match(r"^(?:Name|Variant|Manufacturer):\s*(.+)", clean)
+            if m_bname:
+                val = m_bname.group(1).strip()
+                if val:
+                    self._current_ble["name"] = val
+                    if clean.startswith("Variant:"):
+                        self._current_ble["dev_type"] = val
+                return events
+
+        # Bare `MAC: xx:xx:xx:xx:xx:xx` lines from `blescan -t`
+        m_bare_mac = re.match(r"^MAC:\s*([0-9A-Fa-f:]{17})\b", clean)
+        if m_bare_mac:
+            events.append(ParsedEvent("ble_device", {
+                "mac": m_bare_mac.group(1).upper(),
+                "name": "BLE Raw",
+                "rssi": 0,
+                "dev_type": "BLE Raw",
+                "details": clean,
+            }))
+            return events
+
         m_mac = MAC_RE.search(clean)
-        if m_mac and any(tok in clean for tok in ("Advertiser", "BLE", "AirTag", "Flipper", "iBeacon", "Skimmer", "RSSI")):
+        if m_mac and any(tok in clean for tok in ("Advertiser", "AirTag", "Flipper", "iBeacon", "Skimmer", "Fast Pair", "Apple Watch")):
             mac = m_mac.group(1).upper()
-            rssi_m = re.search(r"(-?\d+)\s*(?:dBm)?", clean.split(mac, 1)[-1])
+            rssi_m = re.search(r"(-?\d+)\s*dBm", clean)
             if not rssi_m:
                 rssi_m = re.search(r"RSSI[:\s]+(-?\d+)", clean)
             rssi_val = int(rssi_m.group(1)) if rssi_m else -90
